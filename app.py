@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+
 import pandas as pd
 import streamlit as st
 
@@ -17,13 +18,23 @@ from patbot.draft_state import (
 from patbot.sleeper import refresh_snapshot, SleeperDataError
 from patbot.sim import compare_candidates
 
+
 st.set_page_config(page_title="PatBot Draft Room", layout="wide")
 st.title("PatBot — 2026 Draft Room")
-st.caption("v0.3.6 • live team rosters • custom scoring • league-aware Monte Carlo")
+st.caption(
+    "v0.3.7 • fixed manager profiles • live team rosters • custom scoring • "
+    "league-aware Monte Carlo"
+)
 
 cfg = load_config()
 teams = int(cfg["league"]["teams"])
 slot = int(cfg["league"]["draft_slot"])
+draft_order_cfg = {
+    int(k): str(v)
+    for k, v in cfg["league"].get("draft_order", {}).items()
+}
+manager_cfg = cfg.get("opponent_managers", {})
+fixed_archetypes = cfg.get("opponent_archetypes", {}).get("fixed_by_slot", {})
 
 LIVE_CSV = Path("data/players_2026_live.csv")
 LIVE_META = Path("data/players_2026_live.meta.json")
@@ -96,11 +107,15 @@ if "draft_history" not in st.session_state:
 
 if "team_names" not in st.session_state:
     st.session_state.team_names = {
-        i: ("PatBot" if i == slot else f"Slot {i}")
+        i: draft_order_cfg.get(i, "PatBot" if i == slot else f"Slot {i}")
         for i in range(1, teams + 1)
     }
 
-# Keep PatBot's label fixed.
+# The configured 2026 order is authoritative. This also upgrades an existing
+# Streamlit session that was started before the real manager names were added.
+for i in range(1, teams + 1):
+    if i in draft_order_cfg:
+        st.session_state.team_names[i] = draft_order_cfg[i]
 st.session_state.team_names[slot] = "PatBot"
 
 draft_history = st.session_state.draft_history
@@ -128,9 +143,11 @@ st.sidebar.write(
 available = players[~players["player_id"].isin(drafted_ids)].copy()
 available_ids = available["player_id"].tolist()
 
+
 def player_label(pid: str) -> str:
     row = player_by_id.loc[str(pid)]
     return f"{row['name']} — {row['team']} {row['pos']}"
+
 
 selected_pid = st.sidebar.selectbox(
     "Record player selected",
@@ -226,7 +243,7 @@ with tab_board:
             preferred = [
                 "name", "team", "pos", "score", "proj_points", "vorp",
                 "adp", "expert_rank", "consensus_value", "consensus_tier",
-                "tier_cliff", "survive_next_pct", "scarcity", "bye"
+                "tier_cliff", "survive_next_pct", "scarcity", "bye",
             ]
             cols = [c for c in preferred if c in board.columns]
             view = board[cols].rename(columns={
@@ -254,13 +271,13 @@ with tab_board:
         st.subheader("PatBot roster")
         mine = players[players["player_id"].isin(my_roster_ids)]
         roster_cols = [
-            c for c in ["name", "team", "pos", "adp", "proj_points", "bye"]
+            c
+            for c in ["name", "team", "pos", "adp", "proj_points", "bye"]
             if c in mine.columns
         ]
         if mine.empty:
             st.write("No PatBot selections yet.")
         else:
-            # Preserve actual draft order rather than data-source row order.
             order = {pid: i for i, pid in enumerate(my_roster_ids)}
             mine = mine.copy()
             mine["_draft_order"] = mine["player_id"].map(order)
@@ -290,7 +307,8 @@ with tab_rosters:
     st.subheader("Live league rosters")
     st.caption(
         "Every recorded selection is assigned automatically to the correct "
-        "snake-draft slot. These rosters now feed the simulator."
+        "snake-draft slot. These rosters feed that specific manager's future "
+        "simulation behavior."
     )
     summary = roster_summary(
         draft_history,
@@ -304,8 +322,8 @@ with tab_rosters:
         if not owner_row.empty:
             st.info(
                 f"Currently on the clock: **{current_owner_name}**. "
-                "PatBot will use this team's existing positional roster when "
-                "estimating its future selections."
+                "PatBot will use this manager's profile and existing positional "
+                "roster when estimating future selections."
             )
 
 # ---------------------------------------------------------------------
@@ -323,42 +341,47 @@ with tab_log:
         st.dataframe(log, use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------------------
-# Manager names scaffold
+# Locked 2026 manager room
 # ---------------------------------------------------------------------
 with tab_setup:
-    st.subheader("Team setup")
+    st.subheader("2026 room model")
     st.write(
-        "You can name the draft slots now or leave them as Slot 1, Slot 2, etc. "
-        "The roster tracker uses the slot itself, so names can be filled in later."
+        "The actual draft order is locked. Each opponent now keeps the same "
+        "manager profile in every simulation instead of receiving a random "
+        "archetype each run."
     )
 
-    cols = st.columns(3)
+    room_rows = []
     for i in range(1, teams + 1):
-        with cols[(i - 1) % 3]:
-            if i == slot:
-                st.text_input(
-                    f"Draft slot {i}",
-                    value="PatBot",
-                    disabled=True,
-                    key=f"team_name_locked_{i}",
-                )
-            else:
-                key = f"team_name_input_{i}"
-                if key not in st.session_state:
-                    st.session_state[key] = st.session_state.team_names.get(
-                        i, f"Slot {i}"
-                    )
-                new_name = st.text_input(
-                    f"Draft slot {i}",
-                    key=key,
-                ).strip()
-                st.session_state.team_names[i] = new_name or f"Slot {i}"
+        manager = draft_order_cfg.get(i, st.session_state.team_names.get(i, f"Slot {i}"))
+        if i == slot:
+            profile = "PatBot"
+            notes = "Our draft engine."
+        else:
+            raw = manager_cfg.get(i) or manager_cfg.get(str(i)) or {}
+            profile = raw.get(
+                "archetype",
+                fixed_archetypes.get(i, fixed_archetypes.get(str(i), "market")),
+            )
+            notes = raw.get("notes", "")
+
+        room_rows.append({
+            "Slot": i,
+            "Manager": manager,
+            "Profile": str(profile).replace("_", " ").title(),
+            "Notes": notes,
+        })
+
+    st.dataframe(
+        pd.DataFrame(room_rows),
+        use_container_width=True,
+        hide_index=True,
+    )
 
     st.caption(
-        "v0.3.6 still randomizes the 4 casual / 3 market / 2 league-aware / "
-        "1 sharp / 1 extremely sharp archetypes across opponent slots. "
-        "Once we map the real draft order and managers, we can lock those "
-        "profiles to specific slots."
+        "Manager tendencies are starting priors, not permanent judgments. As real "
+        "2026 picks are recorded, PatBot also carries each manager's actual roster "
+        "state into the simulation."
     )
 
 # ---------------------------------------------------------------------
@@ -377,8 +400,9 @@ with tab_sim:
     else:
         st.write(
             "PatBot forces each candidate as the current pick, then simulates "
-            "the mixed opponent room through Round 8. Each opponent begins with "
-            "the REAL roster you have already recorded for that draft slot."
+            "the fixed real-manager room through Round 8. Each opponent uses its "
+            "assigned profile and begins with the REAL roster already recorded "
+            "for that draft slot."
         )
         st.caption(
             "The score is a lineup-aware construction score, not a claimed "
@@ -386,12 +410,13 @@ with tab_sim:
         )
 
         real_opp_picks = sum(
-            1 for p in draft_history
+            1
+            for p in draft_history
             if int(p["owner_slot"]) != slot
         )
         st.caption(
             f"Simulation seed: {real_opp_picks} recorded opponent selections "
-            f"across {teams - 1} opponent slots."
+            f"across {teams - 1} fixed opponent slots."
         )
 
         available_board = players[
@@ -484,6 +509,6 @@ with tab_sim:
 
 st.divider()
 st.caption(
-    "v0.3.6: real picks are stored by overall pick and snake-draft owner slot. "
-    "Opponent roster state is carried into every simulation."
+    "v0.3.7: actual managers are locked to draft slots, manager tendencies feed "
+    "the simulations, and real roster state is carried forward after every pick."
 )
