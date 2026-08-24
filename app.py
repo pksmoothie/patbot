@@ -22,8 +22,8 @@ from patbot.sim import compare_candidates
 st.set_page_config(page_title="PatBot Draft Room", layout="wide")
 st.title("PatBot — 2026 Draft Room")
 st.caption(
-    "v0.3.7 • fixed manager profiles • live team rosters • custom scoring • "
-    "league-aware Monte Carlo"
+    "v0.3.8 • Athletic custom rankings • paired simulations • early-pick lookahead • "
+    "fixed manager profiles"
 )
 
 cfg = load_config()
@@ -35,15 +35,31 @@ draft_order_cfg = {
 }
 manager_cfg = cfg.get("opponent_managers", {})
 fixed_archetypes = cfg.get("opponent_archetypes", {}).get("fixed_by_slot", {})
+source_cfg = cfg.get("v03_consensus", {})
 
 LIVE_CSV = Path("data/players_2026_live.csv")
 LIVE_META = Path("data/players_2026_live.meta.json")
 EXAMPLE_CSV = Path("data/example_players.csv")
+ATHLETIC_PATH = Path(source_cfg.get("athletic_path", "private_sources/athletic.xlsx"))
 
 st.sidebar.header("Data")
 
+athletic_upload = st.sidebar.file_uploader(
+    "Athletic custom rankings (.xlsx)",
+    type=["xlsx"],
+    help=(
+        "The workbook stays on this computer in private_sources and is ignored by Git. "
+        "Upload a newer copy here whenever The Athletic updates the projections."
+    ),
+)
+if athletic_upload is not None:
+    ATHLETIC_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ATHLETIC_PATH.write_bytes(athletic_upload.getvalue())
+    st.sidebar.success(f"Saved locally as {ATHLETIC_PATH.name}")
+    st.sidebar.caption("Click Refresh live 2026 data to merge the new workbook into PatBot.")
+
 if st.sidebar.button("Refresh live 2026 data", use_container_width=True):
-    with st.spinner("Refreshing projections, ADP and independent rankings..."):
+    with st.spinner("Refreshing projections, ADP and independent/custom rankings..."):
         try:
             _, _, meta = refresh_snapshot(cfg, LIVE_CSV, LIVE_META)
             st.sidebar.success(f"Updated {meta['draftable_rows']} players.")
@@ -95,7 +111,12 @@ if market_status:
     with st.expander("Independent source status"):
         for source, status in market_status.items():
             if status.get("ok"):
-                st.write(f"✅ {source}: matched {status.get('matched', '?')} players")
+                line = f"✅ {source}: matched {status.get('matched', '?')} players"
+                if status.get("file"):
+                    line += f" • {status['file']}"
+                st.write(line)
+                if status.get("warning"):
+                    st.caption(f"⚠️ {status['warning']}")
             else:
                 st.write(f"⚠️ {source}: {status.get('error', 'unavailable')}")
 
@@ -111,8 +132,6 @@ if "team_names" not in st.session_state:
         for i in range(1, teams + 1)
     }
 
-# The configured 2026 order is authoritative. This also upgrades an existing
-# Streamlit session that was started before the real manager names were added.
 for i in range(1, teams + 1):
     if i in draft_order_cfg:
         st.session_state.team_names[i] = draft_order_cfg[i]
@@ -242,6 +261,7 @@ with tab_board:
         else:
             preferred = [
                 "name", "team", "pos", "score", "proj_points", "vorp",
+                "athletic_rank", "athletic_vorp", "athletic_points",
                 "adp", "expert_rank", "consensus_value", "consensus_tier",
                 "tier_cliff", "survive_next_pct", "scarcity", "bye",
             ]
@@ -251,10 +271,13 @@ with tab_board:
                 "team": "Team",
                 "pos": "Pos",
                 "score": "PatBot",
-                "proj_points": "Custom Proj",
-                "vorp": "VORP",
+                "proj_points": "PatBot Proj",
+                "vorp": "PatBot VORP",
+                "athletic_rank": "Athletic RK",
+                "athletic_vorp": "Athletic VORP",
+                "athletic_points": "Athletic Pts",
                 "adp": "Market ADP",
-                "expert_rank": "Expert Rank",
+                "expert_rank": "Blended Expert RK",
                 "consensus_value": "Consensus",
                 "consensus_tier": "Tier",
                 "tier_cliff": "Cliff After?",
@@ -346,9 +369,8 @@ with tab_log:
 with tab_setup:
     st.subheader("2026 room model")
     st.write(
-        "The actual draft order is locked. Each opponent now keeps the same "
-        "manager profile in every simulation instead of receiving a random "
-        "archetype each run."
+        "The actual draft order is locked. Each opponent keeps the same manager "
+        "profile in every simulation instead of receiving a random archetype each run."
     )
 
     room_rows = []
@@ -399,14 +421,15 @@ with tab_sim:
         st.write("No candidates available.")
     else:
         st.write(
-            "PatBot forces each candidate as the current pick, then simulates "
-            "the fixed real-manager room through Round 8. Each opponent uses its "
-            "assigned profile and begins with the REAL roster already recorded "
-            "for that draft slot."
+            "PatBot forces each candidate as the current pick, then simulates the "
+            "fixed real-manager room through Round 8. Early PatBot follow-up picks "
+            "use lookahead: several choices are tested against the intervening room "
+            "before the pick is made."
         )
         st.caption(
-            "The score is a lineup-aware construction score, not a claimed "
-            "championship probability."
+            "All candidates now use common random numbers — run #1 is the same room "
+            "for every candidate — so close comparisons carry less simulation noise. "
+            "The score is a lineup-aware construction score, not championship probability."
         )
 
         real_opp_picks = sum(
@@ -459,7 +482,7 @@ with tab_sim:
             st.warning("Select at least two candidates to compare.")
         elif st.button("Run candidate simulations", type="primary"):
             with st.spinner(
-                f"Running {runs * len(candidate_ids):,} draft paths..."
+                f"Running {runs * len(candidate_ids):,} paired draft paths with lookahead..."
             ):
                 summary, details = compare_candidates(
                     engine,
@@ -509,6 +532,6 @@ with tab_sim:
 
 st.divider()
 st.caption(
-    "v0.3.7: actual managers are locked to draft slots, manager tendencies feed "
-    "the simulations, and real roster state is carried forward after every pick."
+    "v0.3.8: local Athletic custom rankings are merged without entering GitHub; "
+    "candidate simulations are paired; Rounds 2–3 use one-pick-ahead room simulation."
 )
