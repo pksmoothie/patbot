@@ -10,12 +10,14 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 
+from .athletic import load_athletic_custom
+
 load_dotenv()
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/126.0 Safari/537.36 PatBot/0.3.2"
+    "Chrome/126.0 Safari/537.36 PatBot/0.3.8"
 )
 
 FP_API_BASE = "https://api.fantasypros.com/public/v2/json"
@@ -271,6 +273,19 @@ def fetch_fantasypros_adp(player_names: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows).drop_duplicates("name", keep="first")
 
 
+def _weighted_rank(out: pd.DataFrame, weighted_columns: list[tuple[str, float]]) -> pd.Series:
+    numerator = pd.Series(0.0, index=out.index)
+    denominator = pd.Series(0.0, index=out.index)
+    for column, weight in weighted_columns:
+        if column not in out.columns:
+            continue
+        values = pd.to_numeric(out[column], errors="coerce")
+        valid = values.notna()
+        numerator = numerator + values.fillna(0.0) * float(weight)
+        denominator = denominator + valid.astype(float) * float(weight)
+    return numerator.div(denominator.where(denominator > 0))
+
+
 def augment_market_sources(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame, dict]:
     out = players.copy()
     names = out["name"].dropna().astype(str).tolist()
@@ -286,7 +301,10 @@ def augment_market_sources(players: pd.DataFrame, config: dict) -> tuple[pd.Data
                 ("fantasypros_api_adp", lambda n: fetch_fantasypros_api_adp(n, season)),
             ])
         else:
-            status["fantasypros_api"] = {"ok": False, "error": "No FANTASYPROS_API_KEY in .env (official API preferred)."}
+            status["fantasypros_api"] = {
+                "ok": False,
+                "error": "No FANTASYPROS_API_KEY in .env (official API preferred).",
+            }
 
     if source_cfg.get("fantasypros_rankings", False):
         loaders.append(("fantasypros_scrape_ecr", fetch_fantasypros_rankings))
@@ -303,11 +321,27 @@ def augment_market_sources(players: pd.DataFrame, config: dict) -> tuple[pd.Data
         except Exception as exc:
             status[label] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
-    expert_cols = [c for c in ["fp_ecr", "fd_rank"] if c in out.columns]
-    if expert_cols:
-        out["expert_rank"] = out[expert_cols].mean(axis=1, skipna=True)
+    if source_cfg.get("athletic_custom", True):
+        athletic_path = source_cfg.get("athletic_path", "private_sources/athletic.xlsx")
+        try:
+            athletic, athletic_status = load_athletic_custom(names, athletic_path, config)
+            out = out.merge(athletic, on="name", how="left")
+            status["athletic_custom"] = athletic_status
+        except Exception as exc:
+            status["athletic_custom"] = {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+    generic_cols = [c for c in ["fp_ecr", "fd_rank"] if c in out.columns]
+    if generic_cols:
+        out["generic_expert_rank"] = out[generic_cols].mean(axis=1, skipna=True)
     else:
-        out["expert_rank"] = np.nan
+        out["generic_expert_rank"] = np.nan
+
+    athletic_weight = float(source_cfg.get("athletic_engine_rank_weight", 1.5))
+    engine_rank_cols = [("fp_ecr", 1.0), ("fd_rank", 1.0), ("athletic_rank", athletic_weight)]
+    out["expert_rank"] = _weighted_rank(out, engine_rank_cols)
 
     if "fp_adp" in out.columns:
         out["market_adp"] = out["fp_adp"].fillna(out["adp"])
