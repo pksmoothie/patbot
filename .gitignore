@@ -13,6 +13,11 @@ __pycache__/
 data/players_2026_live.csv
 data/players_2026_live.meta.json
 
+# Paid/private local ranking sources
+private_sources/*.xlsx
+private_sources/*.xlsm
+private_sources/*.xls
+
 # OS/editor noise
 .DS_Store
 Thumbs.db
