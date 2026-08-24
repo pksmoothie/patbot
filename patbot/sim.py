@@ -108,6 +108,16 @@ class FastDraftSimulator:
         simcfg = self.cfg.get("simulation", {})
         self.sd_floor = float(simcfg.get("opponent_adp_sd_floor", 5.0))
         self.sd_pct = float(simcfg.get("opponent_adp_sd_pct", 0.14))
+        self.comparison_seed = int(simcfg.get("comparison_seed", 20260818))
+
+        lookcfg = simcfg.get("patbot_lookahead", {})
+        self.lookahead_enabled = bool(lookcfg.get("enabled", True))
+        self.lookahead_rounds = {int(x) for x in lookcfg.get("rounds", [2, 3])}
+        self.lookahead_branch_width = max(1, int(lookcfg.get("branch_width", 5)))
+        self.lookahead_future_weight = float(lookcfg.get("future_pick_weight", 0.90))
+        self.lookahead_vorp_weight = float(lookcfg.get("pair_vorp_weight", 0.02))
+        self.lookahead_max_gap = max(1, int(lookcfg.get("max_gap_picks", 24)))
+
         self.min_round_k = int(engine.engine_cfg.get("min_round_k", 13))
         self.min_round_def = int(engine.engine_cfg.get("min_round_def", 13))
         self.bench_caps = engine.engine_cfg.get("bench_position_caps", {})
@@ -264,7 +274,12 @@ class FastDraftSimulator:
                 return p
         return current_pick + self.teams * 2
 
-    def patbot_pick(self, available: np.ndarray, roster_counts: np.ndarray, pick: int) -> int:
+    def _patbot_score_vector(
+        self,
+        available: np.ndarray,
+        roster_counts: np.ndarray,
+        pick: int,
+    ) -> np.ndarray:
         next_pick = self._next_my_pick(pick)
         urgency = self._urgency(next_pick)
         roster_fit = self._roster_fit_vector(roster_counts)
@@ -286,8 +301,10 @@ class FastDraftSimulator:
         if round_no < self.min_round_def:
             score[self.pos == "DEF"] -= 35.0
 
-        score = np.where(available, score, -1_000_000_000.0)
-        return int(np.argmax(score))
+        return np.where(available, score, -1_000_000_000.0)
+
+    def patbot_pick(self, available: np.ndarray, roster_counts: np.ndarray, pick: int) -> int:
+        return int(np.argmax(self._patbot_score_vector(available, roster_counts, pick)))
 
     def _base_roster_need_penalty(self, roster_counts: np.ndarray, round_no: int) -> np.ndarray:
         penalty = np.zeros(self.n, dtype=float)
@@ -348,6 +365,119 @@ class FastDraftSimulator:
 
         score = np.where(available, score, 1_000_000_000.0)
         return int(np.argmin(score))
+
+    def _take_opponent_pick(
+        self,
+        pick: int,
+        available: np.ndarray,
+        opp_counts: np.ndarray,
+        archetypes: dict[int, str],
+        market_latent: np.ndarray,
+        custom_noise_base: np.ndarray,
+    ) -> tuple[int, str]:
+        team_slot = _team_slot_for_pick(pick, self.teams)
+        round_no = (pick - 1) // self.teams + 1
+        archetype = archetypes.get(team_slot, "market")
+        profile = self._manager_profile(team_slot, archetype)
+        randomness = float(profile.get("randomness", 1.0))
+        custom_latent = np.maximum(
+            1.0,
+            self.custom_rank + custom_noise_base * randomness,
+        )
+        idx = self.opponent_pick(
+            available,
+            market_latent,
+            custom_latent,
+            opp_counts[team_slot],
+            round_no,
+            profile,
+        )
+        available[idx] = False
+        code = self.pos_code[idx]
+        if code >= 0:
+            opp_counts[team_slot, code] += 1
+        return idx, archetype
+
+    def _lookahead_pick(
+        self,
+        available: np.ndarray,
+        my_counts: np.ndarray,
+        pick: int,
+        opp_counts: np.ndarray,
+        archetypes: dict[int, str],
+        market_latent: np.ndarray,
+        custom_noise_base: np.ndarray,
+    ) -> int:
+        greedy = self.patbot_pick(available, my_counts, pick)
+        round_no = (pick - 1) // self.teams + 1
+        if not self.lookahead_enabled or round_no not in self.lookahead_rounds:
+            return greedy
+
+        next_pick = self._next_my_pick(pick)
+        gap = next_pick - pick
+        if gap <= 0 or gap > self.lookahead_max_gap:
+            return greedy
+
+        current_scores = self._patbot_score_vector(available, my_counts, pick)
+        candidates = np.where(available)[0]
+        if len(candidates) <= 1:
+            return greedy
+        candidates = candidates[np.argsort(current_scores[candidates])[::-1]]
+        candidates = candidates[: self.lookahead_branch_width]
+
+        best_idx = int(greedy)
+        best_value = -float("inf")
+
+        for candidate in candidates:
+            branch_available = available.copy()
+            branch_opp_counts = opp_counts.copy()
+            branch_my_counts = my_counts.copy()
+
+            branch_available[candidate] = False
+            code = self.pos_code[candidate]
+            if code >= 0:
+                branch_my_counts[code] += 1
+
+            for future_pick in range(pick + 1, next_pick):
+                if future_pick in self.my_picks:
+                    break
+                if not branch_available.any():
+                    break
+                self._take_opponent_pick(
+                    future_pick,
+                    branch_available,
+                    branch_opp_counts,
+                    archetypes,
+                    market_latent,
+                    custom_noise_base,
+                )
+
+            if not branch_available.any():
+                future_value = 0.0
+                future_idx = None
+            else:
+                future_scores = self._patbot_score_vector(
+                    branch_available,
+                    branch_my_counts,
+                    next_pick,
+                )
+                future_idx = int(np.argmax(future_scores))
+                future_value = float(future_scores[future_idx])
+
+            pair_vorp = max(float(self.vorp[candidate]), 0.0)
+            if future_idx is not None:
+                pair_vorp += max(float(self.vorp[future_idx]), 0.0)
+
+            path_value = (
+                float(current_scores[candidate])
+                + self.lookahead_future_weight * future_value
+                + self.lookahead_vorp_weight * pair_vorp
+            )
+            if path_value > best_value:
+                best_value = path_value
+                best_idx = int(candidate)
+
+        return best_idx
 
     def evaluate_roster(self, mine: list[int]) -> dict:
         rcfg = self.engine.roster_cfg
@@ -463,7 +593,6 @@ class FastDraftSimulator:
         total_projections = np.empty(runs, dtype=float)
         second_names = Counter()
         third_names = Counter()
-        archetype_pick_counts = Counter()
 
         base_available = np.ones(self.n, dtype=bool)
         if drafted_idx:
@@ -501,7 +630,15 @@ class FastDraftSimulator:
                         if not available[idx]:
                             break
                     else:
-                        idx = self.patbot_pick(available, my_counts, pick)
+                        idx = self._lookahead_pick(
+                            available,
+                            my_counts,
+                            pick,
+                            opp_counts,
+                            archetypes,
+                            market_latent,
+                            custom_noise_base,
+                        )
 
                     available[idx] = False
                     mine.append(idx)
@@ -517,31 +654,14 @@ class FastDraftSimulator:
                         third_names[self.names[idx]] += 1
 
                 else:
-                    team_slot = _team_slot_for_pick(pick, self.teams)
-                    round_no = (pick - 1) // self.teams + 1
-                    archetype = archetypes.get(team_slot, "market")
-                    profile = self._manager_profile(team_slot, archetype)
-                    randomness = float(profile.get("randomness", 1.0))
-                    custom_latent = np.maximum(
-                        1.0,
-                        self.custom_rank + custom_noise_base * randomness,
-                    )
-
-                    idx = self.opponent_pick(
+                    self._take_opponent_pick(
+                        pick,
                         available,
+                        opp_counts,
+                        archetypes,
                         market_latent,
-                        custom_latent,
-                        opp_counts[team_slot],
-                        round_no,
-                        profile,
+                        custom_noise_base,
                     )
-                    available[idx] = False
-
-                    code = self.pos_code[idx]
-                    if code >= 0:
-                        opp_counts[team_slot, code] += 1
-
-                    archetype_pick_counts[archetype] += 1
 
             eval_result = self.evaluate_roster(mine)
             lineup_scores[run] = eval_result["lineup_score"]
@@ -569,6 +689,7 @@ class FastDraftSimulator:
             "avg_roster_projected_points": round(float(np.mean(total_projections)), 2),
             "most_common_second_pick": top_counter(second_names),
             "most_common_third_pick": top_counter(third_names),
+            "lookahead_enabled": self.lookahead_enabled,
         }
 
 
@@ -609,7 +730,10 @@ def compare_candidates(
     sim = FastDraftSimulator(engine)
     results = []
 
-    for i, pid in enumerate(candidate_ids):
+    # Common random numbers: every candidate faces the same simulated room on
+    # run 1, the same room on run 2, etc. This dramatically reduces noise in
+    # close comparisons such as Puka vs. Chase.
+    for pid in candidate_ids:
         results.append(
             sim.simulate_candidate(
                 current_pick=current_pick,
@@ -618,7 +742,7 @@ def compare_candidates(
                 candidate_id=str(pid),
                 runs=int(runs),
                 through_round=int(through_round),
-                seed=20260818 + i * 97,
+                seed=sim.comparison_seed,
                 draft_history=draft_history,
             )
         )
