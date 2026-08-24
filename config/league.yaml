@@ -140,9 +140,17 @@ v03_consensus:
   fantasypros_adp: false
   fantasydata_rankings: true
 
+  # Paid/custom workbook remains local and never enters the public repo.
+  athletic_custom: true
+  athletic_path: private_sources/athletic.xlsx
+  # Athletic's overall rank is custom-scoring/VORP-aware, so give it a little
+  # more weight than each generic expert source inside PatBot's expert signal.
+  athletic_engine_rank_weight: 1.5
+
   weights:
-    custom_vorp: 0.55
-    expert_rank: 0.30
+    custom_vorp: 0.45
+    athletic_custom: 0.20
+    expert_rank: 0.20
     market_rank: 0.15
 
   tiering:
@@ -157,6 +165,21 @@ simulation:
   through_round: 8
   opponent_adp_sd_floor: 5.0
   opponent_adp_sd_pct: 0.14
+
+  # Every candidate gets the same random room path on run N. This removes
+  # avoidable Monte Carlo noise from close candidate comparisons.
+  comparison_seed: 20260818
+
+  # v0.3.8: on early PatBot follow-up picks, branch across several plausible
+  # current choices, simulate the intervening real-manager room, and consider
+  # what comes back at the next PatBot selection before committing.
+  patbot_lookahead:
+    enabled: true
+    rounds: [2, 3]
+    branch_width: 5
+    future_pick_weight: 0.90
+    pair_vorp_weight: 0.02
+    max_gap_picks: 24
 
 opponent_archetypes:
   # 11 opponents + PatBot = 12 teams.
