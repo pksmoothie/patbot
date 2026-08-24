@@ -66,10 +66,6 @@ scoring:
   # confirms the league-specific kicker/defense rules.
 
 bonus_model:
-  # Season projections do not tell us exactly how often a player will cross
-  # single-game yardage thresholds. v0.2 estimates expected bonus points by
-  # treating weekly yardage as normally distributed around projected YPG.
-  # These SD floors / coefficients are explicitly tunable.
   pass_yards:
     sd_floor: 55
     sd_pct_of_mean: 0.28
@@ -118,8 +114,6 @@ kicker_scoring:
     20_29: -1
     30_39: -1
     40_49: -1
-    # No 50+ missed-field-goal value was supplied, so PatBot leaves it unset
-    # rather than assuming a rule.
   extra_point_made: 1
   extra_point_missed: -1
 
@@ -141,14 +135,9 @@ defense_scoring:
     35_plus: -4
 
 v03_consensus:
-  # Preferred: official FantasyPros API via FANTASYPROS_API_KEY in .env.
   fantasypros_api: true
-
-  # HTML scraping is deliberately disabled by default because FantasyPros
-  # serves different markup / bot challenges to local automated clients.
   fantasypros_rankings: false
   fantasypros_adp: false
-
   fantasydata_rankings: true
 
   weights:
@@ -170,8 +159,7 @@ simulation:
   opponent_adp_sd_pct: 0.14
 
 opponent_archetypes:
-  # 11 opponents + PatBot = 12-team league.
-  # Archetypes are randomly assigned to opponent draft slots each simulation.
+  # 11 opponents + PatBot = 12 teams.
   counts:
     casual: 4
     market: 3
@@ -179,8 +167,20 @@ opponent_archetypes:
     sharp: 1
     extremely_sharp: 1
 
-  # market_weight/custom_weight determine how much an opponent follows
-  # generic PPR market price vs. PatBot's custom-scoring value.
+  # Real 2026 room: archetypes are locked to actual draft slots.
+  fixed_by_slot:
+    1: casual
+    2: market
+    4: casual
+    5: market
+    6: league_aware
+    7: sharp
+    8: casual
+    9: market
+    10: league_aware
+    11: extremely_sharp
+    12: casual
+
   casual:
     market_weight: 0.95
     custom_weight: 0.05
@@ -211,19 +211,80 @@ opponent_archetypes:
     roster_need_strength: 1.30
     randomness: 0.55
 
+# Manager-specific adjustments. These sit on top of the archetype defaults.
+opponent_managers:
+  1:
+    name: Paul
+    archetype: casual
+    randomness: 1.40
+    roster_need_strength: 0.45
+    notes: "Casual; can make boneheaded decisions."
+  2:
+    name: Faherty
+    archetype: market
+    rookie_rank_bonus: 12.0
+    notes: "Market-oriented; historically leans heavily toward rookies."
+  4:
+    name: James
+    archetype: casual
+    randomness: 1.50
+    roster_need_strength: 0.40
+    inseason_engagement: low
+    notes: "Very casual; high risk of checking out during the season."
+  5:
+    name: Potter
+    archetype: market
+    notes: "Market baseline."
+  6:
+    name: Sarlo
+    archetype: league_aware
+    randomness: 0.78
+    roster_need_strength: 1.05
+    notes: "League-aware and generally by the book."
+  7:
+    name: Dave
+    archetype: sharp
+    notes: "Sharp."
+  8:
+    name: Frank
+    archetype: casual
+    randomness: 1.60
+    roster_need_strength: 0.35
+    notes: "Very casual; usually near the bottom. Possible AI use is unconfirmed, so current model stays casual until observed behavior says otherwise."
+  9:
+    name: Matt
+    archetype: market
+    market_weight: 0.68
+    custom_weight: 0.32
+    roster_need_strength: 0.85
+    randomness: 0.92
+    notes: "Between market and league-aware."
+  10:
+    name: George
+    archetype: league_aware
+    market_weight: 0.43
+    custom_weight: 0.57
+    roster_need_strength: 1.05
+    randomness: 0.78
+    notes: "League-aware, bordering sharp."
+  11:
+    name: Lou
+    archetype: extremely_sharp
+    notes: "Extremely sharp; usually wins the league."
+  12:
+    name: Vinnie
+    archetype: casual
+    randomness: 1.45
+    roster_need_strength: 0.40
+    notes: "Very casual."
+
 roster_evaluation:
-  # After the simulated draft window, score the actual starting lineup.
-  # Bench value matters, but at a discount.
   bench_vorp_discount: 0.20
 
-  # Penalize leaving important starter groups completely empty by the
-  # evaluation round. This is intentionally mild, not a "must draft RB"
-  # hard rule.
   empty_group_penalty:
     RB: 18
     WR: 12
 
-  # Additional penalty per still-empty required starter slot.
   missing_starter_penalty:
     QB: 7
     RB: 12
@@ -231,7 +292,6 @@ roster_evaluation:
     TE: 6
     FLEX: 7
 
-  # Reward a balanced five/eight-round foundation.
   construction_bonus:
     has_qb: 2
     has_te: 2
