@@ -3,8 +3,21 @@ league:
   season: 2026
   teams: 12
   draft_type: snake
-  draft_slot: 3   # planning assumption; change when actual slot is known
+  draft_slot: 3
   ppr: 1.0
+  draft_order:
+    1: Paul
+    2: Faherty
+    3: PatBot
+    4: James
+    5: Potter
+    6: Sarlo
+    7: Dave
+    8: Frank
+    9: Matt
+    10: George
+    11: Lou
+    12: Vinnie
 
 roster:
   QB: 1
