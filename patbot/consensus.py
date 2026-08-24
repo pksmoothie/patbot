@@ -17,7 +17,6 @@ def _pct_low_good(series: pd.Series) -> pd.Series:
 def add_consensus_values(players: pd.DataFrame, config: dict) -> pd.DataFrame:
     out = players.copy()
 
-    # Approximate static VORP using configured replacement ranks.
     levels = {}
     replacement = config["draft_engine"]["replacement_rank"]
     for pos, rank in replacement.items():
@@ -32,27 +31,34 @@ def add_consensus_values(players: pd.DataFrame, config: dict) -> pd.DataFrame:
     out["static_vorp"] = out["proj_points"] - out["static_replacement"]
     out["vorp_pct"] = _pct_high_good(out["static_vorp"])
 
-    if "expert_rank" in out:
-        out["expert_pct"] = _pct_low_good(out["expert_rank"])
+    expert_col = "generic_expert_rank" if "generic_expert_rank" in out else "expert_rank"
+    if expert_col in out:
+        out["expert_pct"] = _pct_low_good(out[expert_col])
     else:
         out["expert_pct"] = np.nan
+
+    if "athletic_rank" in out:
+        out["athletic_pct"] = _pct_low_good(out["athletic_rank"])
+    else:
+        out["athletic_pct"] = np.nan
 
     market_col = "market_adp" if "market_adp" in out else "adp"
     out["market_pct"] = _pct_low_good(out[market_col])
 
     weights = config.get("v03_consensus", {}).get("weights", {})
-    w_vorp = float(weights.get("custom_vorp", 0.55))
-    w_expert = float(weights.get("expert_rank", 0.30))
-    w_market = float(weights.get("market_rank", 0.15))
+    component_weights = {
+        "vorp_pct": float(weights.get("custom_vorp", 0.45)),
+        "athletic_pct": float(weights.get("athletic_custom", 0.20)),
+        "expert_pct": float(weights.get("expert_rank", 0.20)),
+        "market_pct": float(weights.get("market_rank", 0.15)),
+    }
 
     def blended(row):
         components = []
-        if pd.notna(row["vorp_pct"]):
-            components.append((row["vorp_pct"], w_vorp))
-        if pd.notna(row.get("expert_pct")):
-            components.append((row["expert_pct"], w_expert))
-        if pd.notna(row["market_pct"]):
-            components.append((row["market_pct"], w_market))
+        for column, weight in component_weights.items():
+            value = row.get(column)
+            if pd.notna(value) and weight > 0:
+                components.append((float(value), weight))
         total_w = sum(w for _, w in components)
         if not total_w:
             return np.nan
