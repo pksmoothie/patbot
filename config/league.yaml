@@ -1,0 +1,227 @@
+league:
+  platform: yahoo
+  season: 2026
+  teams: 12
+  draft_type: snake
+  draft_slot: 3   # planning assumption; change when actual slot is known
+  ppr: 1.0
+
+roster:
+  QB: 1
+  RB: 2
+  WR: 3
+  TE: 1
+  FLEX: 1
+  K: 1
+  DEF: 1
+  BN: 5
+  IR: 1
+  flex_eligible: [RB, WR, TE]
+
+scoring:
+  pass_completion: 0.25
+  pass_yards_per_point: 25
+  pass_td: 4
+  interception: -2
+
+  pass_yard_bonuses:
+    - {threshold: 320, points: 1}
+    - {threshold: 350, points: 3}
+    - {threshold: 380, points: 1}
+
+  rush_yards_per_point: 10
+  rush_td: 6
+  rush_yard_bonuses:
+    - {threshold: 130, points: 1}
+    - {threshold: 155, points: 3}
+    - {threshold: 180, points: 1}
+
+  reception: 1.0
+  rec_yards_per_point: 10
+  rec_td: 6
+  rec_yard_bonuses:
+    - {threshold: 140, points: 1}
+    - {threshold: 165, points: 3}
+    - {threshold: 190, points: 1}
+
+  return_td: 6
+  two_point_conversion: 2
+  fumble_lost: -2
+  offensive_fumble_return_td: 6
+
+  # K and DEF remain provider-projection based until Yahoo settings import
+  # confirms the league-specific kicker/defense rules.
+
+bonus_model:
+  # Season projections do not tell us exactly how often a player will cross
+  # single-game yardage thresholds. v0.2 estimates expected bonus points by
+  # treating weekly yardage as normally distributed around projected YPG.
+  # These SD floors / coefficients are explicitly tunable.
+  pass_yards:
+    sd_floor: 55
+    sd_pct_of_mean: 0.28
+  rush_yards:
+    sd_floor: 25
+    sd_pct_of_mean: 0.55
+  rec_yards:
+    sd_floor: 30
+    sd_pct_of_mean: 0.65
+
+draft_engine:
+  replacement_rank:
+    QB: 12
+    RB: 30
+    WR: 42
+    TE: 14
+    K: 12
+    DEF: 12
+
+  weights:
+    vorp: 0.35
+    projection: 0.25
+    urgency: 0.20
+    scarcity: 0.12
+    roster_fit: 0.08
+
+  injury_risk_penalty: 8.0
+  min_round_k: 13
+  min_round_def: 13
+
+  bench_position_caps:
+    QB: 2
+    TE: 2
+    K: 1
+    DEF: 1
+
+kicker_scoring:
+  field_goal_made:
+    0_19: 3
+    20_29: 3
+    30_39: 3
+    40_49: 4
+    50_plus: 5
+  field_goal_missed:
+    0_19: -1
+    20_29: -1
+    30_39: -1
+    40_49: -1
+    # No 50+ missed-field-goal value was supplied, so PatBot leaves it unset
+    # rather than assuming a rule.
+  extra_point_made: 1
+  extra_point_missed: -1
+
+defense_scoring:
+  sack: 1
+  interception: 2
+  fumble_recovery: 2
+  touchdown: 6
+  safety: 2
+  blocked_kick: 2
+  extra_point_returned: 2
+  points_allowed:
+    0: 10
+    1_6: 7
+    7_13: 4
+    14_20: 1
+    21_27: 0
+    28_34: -1
+    35_plus: -4
+
+v03_consensus:
+  # Preferred: official FantasyPros API via FANTASYPROS_API_KEY in .env.
+  fantasypros_api: true
+
+  # HTML scraping is deliberately disabled by default because FantasyPros
+  # serves different markup / bot challenges to local automated clients.
+  fantasypros_rankings: false
+  fantasypros_adp: false
+
+  fantasydata_rankings: true
+
+  weights:
+    custom_vorp: 0.55
+    expert_rank: 0.30
+    market_rank: 0.15
+
+  tiering:
+    gap_multiplier: 2.5
+    absolute_gap_floor: 2.0
+    minimum_tier_size: 2
+    maximum_tier_size: 8
+
+simulation:
+  default_runs: 300
+  max_runs: 1500
+  through_round: 8
+  opponent_adp_sd_floor: 5.0
+  opponent_adp_sd_pct: 0.14
+
+opponent_archetypes:
+  # 11 opponents + PatBot = 12-team league.
+  # Archetypes are randomly assigned to opponent draft slots each simulation.
+  counts:
+    casual: 4
+    market: 3
+    league_aware: 2
+    sharp: 1
+    extremely_sharp: 1
+
+  # market_weight/custom_weight determine how much an opponent follows
+  # generic PPR market price vs. PatBot's custom-scoring value.
+  casual:
+    market_weight: 0.95
+    custom_weight: 0.05
+    roster_need_strength: 0.55
+    randomness: 1.20
+
+  market:
+    market_weight: 0.82
+    custom_weight: 0.18
+    roster_need_strength: 0.75
+    randomness: 1.00
+
+  league_aware:
+    market_weight: 0.55
+    custom_weight: 0.45
+    roster_need_strength: 0.95
+    randomness: 0.85
+
+  sharp:
+    market_weight: 0.32
+    custom_weight: 0.68
+    roster_need_strength: 1.15
+    randomness: 0.70
+
+  extremely_sharp:
+    market_weight: 0.15
+    custom_weight: 0.85
+    roster_need_strength: 1.30
+    randomness: 0.55
+
+roster_evaluation:
+  # After the simulated draft window, score the actual starting lineup.
+  # Bench value matters, but at a discount.
+  bench_vorp_discount: 0.20
+
+  # Penalize leaving important starter groups completely empty by the
+  # evaluation round. This is intentionally mild, not a "must draft RB"
+  # hard rule.
+  empty_group_penalty:
+    RB: 18
+    WR: 12
+
+  # Additional penalty per still-empty required starter slot.
+  missing_starter_penalty:
+    QB: 7
+    RB: 12
+    WR: 9
+    TE: 6
+    FLEX: 7
+
+  # Reward a balanced five/eight-round foundation.
+  construction_bonus:
+    has_qb: 2
+    has_te: 2
+    has_two_rb: 6
+    has_three_wr: 6
+    has_flex_depth: 3

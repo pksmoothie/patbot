@@ -1,0 +1,47 @@
+PATBOT v0.3.6 — LIVE TEAM ROSTER TRACKING
+
+WHAT CHANGED
+- You no longer click "Opponent" versus "PatBot."
+- PatBot knows who owns every overall pick from the snake draft order.
+- Every real pick is stored with:
+  overall pick / round / draft slot / player / position.
+- All 12 team rosters are tracked live.
+- The simulator now starts each opponent with that team's REAL roster.
+- If a team already has a QB, its future simulated QB demand is reduced.
+- Undo Last Pick is included.
+- Team names can be entered under Team Setup.
+
+INSTALL
+
+1. Extract patbot_v0_3_6.zip.
+2. Open PowerShell in the extracted folder.
+3. Run:
+
+   py -m venv .venv
+
+4. Install:
+
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+5. Tests:
+
+   .\.venv\Scripts\python.exe -m pytest
+
+6. Copy your existing FantasyPros API key into the new local `.env` file.
+   Do not send the key to ChatGPT.
+
+7. Refresh:
+
+   .\.venv\Scripts\python.exe refresh_data.py
+
+8. Launch:
+
+   .\.venv\Scripts\python.exe -m streamlit run app.py
+
+FIRST TEST
+- At Pick 1, select the player taken. PatBot auto-assigns him to Slot 1.
+- At Pick 2, select the player taken. PatBot auto-assigns him to Slot 2.
+- Pick 3 automatically belongs to PatBot.
+- Open Team Rosters and confirm Slots 1 and 2 each show their actual player.
+- Open Draft Log and confirm Picks 1 and 2.
+- Run the Simulation Lab. Those actual opponent rosters now seed the sim.

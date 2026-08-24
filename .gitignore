@@ -1,0 +1,23 @@
+# Local Python environment
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets
+.env
+.streamlit/secrets.toml
+
+# Generated live-data snapshots
+# Keep the tiny checked-in example data, but not local API refresh output.
+data/players_2026_live.csv
+data/players_2026_live.meta.json
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
