@@ -25,6 +25,17 @@ def _safe_float(value, default=np.nan) -> float:
     return float(default) if np.isnan(value) else float(value)
 
 
+def _clean_text(value) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
 def _sleep_for_fp_rate_limit(config: dict) -> None:
     seconds = float(config.get("risk_model", {}).get("fantasypros_request_spacing_seconds", 1.05))
     if seconds > 0:
@@ -86,7 +97,8 @@ def _fetch_history(fp_ids: set[str], season: int, config: dict) -> tuple[dict[st
             games = _safe_float(p.get("games"))
             if np.isnan(games) or games < 0:
                 continue
-            history[spid].append((year, min(17.0, games)))
+            season_max = 16.0 if year <= 2020 else 17.0
+            history[spid].append((year, min(season_max, games)))
 
     matched = sum(1 for values in history.values() if values)
     return history, {
@@ -170,14 +182,29 @@ def _history_metrics(values: list[tuple[int, float]], season: int, config: dict)
     weighted = []
     for year, games in values:
         weight = weight_by_year.get(year, 0.0)
-        if weight > 0:
-            weighted.append((float(games), weight))
+        if weight <= 0:
+            continue
+        season_max = 16.0 if year <= 2020 else 17.0
+        availability = max(0.0, min(1.0, float(games) / season_max))
+        weighted.append((availability, weight))
     if not weighted:
         return len(values), np.nan, 0.0
     denom = sum(weight for _, weight in weighted)
-    games = sum(g * weight for g, weight in weighted) / denom
-    missed_rate = max(0.0, min(1.0, (17.0 - games) / 17.0))
-    return len(weighted), games, missed_rate
+    availability = sum(a * weight for a, weight in weighted) / denom
+    equivalent_games = 17.0 * availability
+    missed_rate = max(0.0, min(1.0, 1.0 - availability))
+    return len(weighted), equivalent_games, missed_rate
+
+
+def _history_signal_scale(years_exp: float) -> float:
+    """Reduce false injury inference for young players whose early missed games may be role-related."""
+    if np.isnan(years_exp) or years_exp >= 3:
+        return 1.0
+    if years_exp <= 0:
+        return 0.0
+    if years_exp <= 1:
+        return 0.35
+    return 0.65
 
 
 def _age_tail_bonus(pos: str, age: float) -> float:
@@ -194,13 +221,14 @@ def _age_tail_bonus(pos: str, age: float) -> float:
 
 
 def _status_probability(item: dict | None, fallback_status: str | None) -> tuple[str, float]:
+    fallback = _clean_text(fallback_status)
     if item:
-        status = str(item.get("status") or fallback_status or "")
+        status = _clean_text(item.get("status")) or fallback
         p = _safe_float(item.get("probability_of_playing"))
         if not np.isnan(p):
             return status, max(0.0, min(1.0, p))
     else:
-        status = str(fallback_status or "")
+        status = fallback
 
     lower = status.lower()
     if not lower:
@@ -282,8 +310,11 @@ def augment_risk_sources(players: pd.DataFrame, config: dict) -> tuple[pd.DataFr
         fp_id_value = row.get("fp_player_id")
         fp_id = "" if pd.isna(fp_id_value) else str(fp_id_value)
         age = _safe_float(row.get("fp_age"))
+        years_exp = _safe_float(row.get("years_exp"))
 
         seasons_obs, hist_games, hist_missed_rate = _history_metrics(history.get(fp_id, []), season, config)
+        history_scale = _history_signal_scale(years_exp)
+        effective_hist_missed_rate = hist_missed_rate * history_scale
         age_bonus = _age_tail_bonus(pos, age)
         injury_item = injuries.get(fp_id)
         current_status, play_prob = _status_probability(injury_item, row.get("injury_status"))
@@ -304,16 +335,16 @@ def augment_risk_sources(players: pd.DataFrame, config: dict) -> tuple[pd.DataFr
             manual_note = str(override.get("note") or "")
 
         base_cat = float(rcfg.get("base_catastrophic_probability", 0.02))
-        cat_prob = base_cat + float(rcfg.get("history_catastrophic_weight", 0.45)) * hist_missed_rate
+        cat_prob = base_cat + float(rcfg.get("history_catastrophic_weight", 0.45)) * effective_hist_missed_rate
         cat_prob += age_bonus + float(rcfg.get("current_injury_catastrophic_weight", 0.10)) * current_risk
         cat_prob = max(base_cat, min(float(rcfg.get("max_catastrophic_probability", 0.35)), cat_prob))
 
         minor_lambda = float(rcfg.get("base_minor_miss_lambda", 0.15))
-        minor_lambda += float(rcfg.get("history_minor_weight", 1.0)) * hist_missed_rate
+        minor_lambda += float(rcfg.get("history_minor_weight", 1.0)) * effective_hist_missed_rate
         minor_lambda += float(rcfg.get("current_injury_minor_weight", 0.40)) * current_risk
         minor_lambda = max(0.0, min(float(rcfg.get("max_minor_miss_lambda", 1.50)), minor_lambda))
 
-        history_component = min(1.0, hist_missed_rate / 0.30) if hist_missed_rate > 0 else 0.0
+        history_component = min(1.0, effective_hist_missed_rate / 0.30) if effective_hist_missed_rate > 0 else 0.0
         age_component = min(1.0, age_bonus / 0.08) if age_bonus > 0 else 0.0
         off_component = min(1.0, off_prob / 0.20) if off_prob > 0 else 0.0
         risk_score = (
@@ -327,7 +358,9 @@ def augment_risk_sources(players: pd.DataFrame, config: dict) -> tuple[pd.DataFr
 
         notes = []
         if seasons_obs:
-            notes.append(f"{seasons_obs}y weighted games {hist_games:.1f}")
+            notes.append(f"{seasons_obs}y weighted availability {hist_games:.1f}/17")
+            if history_scale < 1.0:
+                notes.append(f"young-player history weight {history_scale:.0%}")
         if current_status:
             notes.append(f"{current_status} ({play_prob:.0%} play probability)")
         if news_item.get("title"):
@@ -340,6 +373,7 @@ def augment_risk_sources(players: pd.DataFrame, config: dict) -> tuple[pd.DataFr
             "history_seasons_observed": seasons_obs,
             "history_weighted_games": round(hist_games, 2) if not np.isnan(hist_games) else np.nan,
             "history_missed_rate": round(hist_missed_rate, 4),
+            "history_signal_scale": round(history_scale, 4),
             "current_injury_status": current_status,
             "current_play_probability": round(play_prob, 4),
             "age_tail_bonus": round(age_bonus, 4),
@@ -355,7 +389,7 @@ def augment_risk_sources(players: pd.DataFrame, config: dict) -> tuple[pd.DataFr
     risk_frame = pd.DataFrame(records)
     out = out.drop(columns=[c for c in risk_frame.columns if c != "name" and c in out.columns], errors="ignore")
     out = out.merge(risk_frame, on="name", how="left")
-    existing_series = pd.to_numeric(out.get("injury_risk"), errors="coerce").fillna(0.0)
+    existing_series = pd.to_numeric(out["injury_risk"], errors="coerce").fillna(0.0)
     out["sleeper_current_injury_risk"] = existing_series
     out["injury_risk"] = pd.to_numeric(out["risk_score"], errors="coerce").fillna(existing_series)
 
@@ -363,6 +397,6 @@ def augment_risk_sources(players: pd.DataFrame, config: dict) -> tuple[pd.DataFr
     status["model"] = {
         "ok": True,
         "matched": int(out["risk_score"].notna().sum()),
-        "note": "History shapes availability tails; missed games receive partial replacement value in simulation.",
+        "note": "History shapes availability tails; young-player history is downweighted; missed games receive partial replacement value in simulation.",
     }
     return out, status
