@@ -19,7 +19,7 @@ DIAGNOSTIC_VARIANTS = [
     (
         "baseline",
         "Baseline",
-        "Current PatBot scoring, expert blend, scarcity and lookahead.",
+        "Current PatBot scoring, expert blend, scarcity, risk model and lookahead.",
     ),
     (
         "no_completion",
@@ -72,7 +72,7 @@ def _rescore_players(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame,
     if "raw_stats_json" not in players.columns:
         raise ValueError(
             "This player snapshot predates scoring diagnostics. Refresh live 2026 data "
-            "with v0.3.9 so raw Sleeper stat lines are stored locally."
+            "with the current PatBot version so raw Sleeper stat lines are stored locally."
         )
 
     out = players.copy()
@@ -242,7 +242,11 @@ def _simulate_focus(
                     custom_noise_base,
                 )
 
-        lineup_scores[run] = sim.evaluate_roster(mine)["lineup_score"]
+        run_proj, _ = sim._sample_run_projection(rng)
+        lineup_scores[run] = sim.evaluate_roster(
+            mine,
+            projection_override=run_proj,
+        )["lineup_score"]
 
     second_total = sum(second_names.values())
     third_total = sum(third_names.values())
