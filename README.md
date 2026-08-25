@@ -1,23 +1,26 @@
-# PatBot Fantasy Football GM — v0.3.6
+# PatBot Fantasy Football GM — v0.4.0
 
 PatBot is a personal 2026 Yahoo fantasy-football draft and team-management project built around the league's exact scoring system.
 
-The repository is now the permanent source of truth for PatBot. Local secrets and generated live-data snapshots stay on the user's PC and are intentionally excluded from Git.
+The repository is the permanent source of truth for PatBot. Local secrets, the paid Athletic workbook and generated live-data snapshots stay on the user's PC and are intentionally excluded from Git.
 
 ## Current draft capabilities
 
 - Exact custom offensive scoring for QB/RB/WR/TE projections.
-- Sleeper projections and ADP fallback.
-- FantasyPros official API consensus rankings / ADP when a local API key is present.
+- Sleeper raw projections and ADP fallback.
+- FantasyPros Premium full-board PPR ECR/ADP.
 - FantasyData PPR rankings.
+- Local Athletic custom rankings/VORP workbook.
 - Custom VORP, consensus value, tiers and tier-cliff signals.
-- Fast Monte Carlo draft simulation through Round 8.
-- Opponent room model: 4 casual, 3 market, 2 league-aware, 1 sharp, 1 extremely sharp, plus PatBot.
-- Lineup-aware roster-construction evaluation.
-- Real snake-draft ownership for every overall pick.
-- Live roster tracking for all 12 teams.
-- Real opponent roster state fed into future simulations.
-- Draft log, team-roster view, manager-name setup and undo-last-pick.
+- Fixed real-manager room model and live roster state for all 12 teams.
+- Fast paired Monte Carlo draft simulation through Round 8.
+- Early-pick one-step lookahead.
+- Model Diagnostics scoring/weight ablations.
+- Explicit risk & availability layer using FantasyPros historical games, current injuries and recent risk news.
+- Dated manual uncertainty flags for unusual off-field situations that structured feeds cannot represent cleanly.
+- Risk-adjusted Monte Carlo outputs including 10th-percentile outcomes, candidate games, 4+ game tail events and off-field-event frequency.
+- Partial replacement-player value during missed games rather than treating an injured starter as zero lineup production.
+- Pick-immediately-after-us diagnostics to show whether candidate branches quickly reconverge.
 
 ## One-time Windows setup
 
@@ -31,7 +34,7 @@ The `.env` file is ignored by Git. Put the FantasyPros key there and never commi
 
 ## Normal use after setup
 
-When ChatGPT has pushed a PatBot update, double-click:
+When ChatGPT has pushed a PatBot update, run:
 
 `UPDATE_AND_RUN.bat`
 
@@ -43,9 +46,19 @@ It will:
 4. Refresh live player data.
 5. Launch PatBot.
 
-If you only want to launch the existing local version without pulling or refreshing, double-click:
+The v0.4 refresh makes several FantasyPros calls for six years of availability history plus current injury/news data and intentionally spaces them to respect the Premium API rate limit, so refresh is a little slower than v0.3.x.
+
+If you only want to launch the existing local version without pulling or refreshing, run:
 
 `RUN_PATBOT.bat`
+
+## Athletic workbook
+
+The current paid Athletic workbook is stored locally at:
+
+`private_sources/athletic.xlsx`
+
+It is Git-ignored. Do not re-upload it unless The Athletic has published changes you want PatBot to use; after replacing it, refresh live data.
 
 ## Manual commands
 
@@ -54,6 +67,16 @@ If you only want to launch the existing local version without pulling or refresh
 .\.venv\Scripts\python.exe refresh_data.py
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
+
+## Risk model philosophy
+
+PatBot does not replace a projection with an arbitrary injury haircut. It keeps the source projection as the production baseline and models availability as a separate distribution.
+
+Historical games provide an availability signal, with recent seasons weighted more heavily and young-player history downweighted because early-career missed games can reflect role rather than injury. Current FantasyPros injury/practice probabilities add near-term information. Recent legal/discipline news can create a temporary off-field tail, but a risk event is sampled as uncertainty rather than assumed to occur.
+
+When a player misses simulated games, PatBot credits a fraction of replacement-level production for those weeks. This is meant to model the roster decision more realistically than assigning zero points.
+
+The risk calibration is intentionally transparent and should be reviewed as new 2026 information arrives; it is not a claim that historical availability perfectly predicts future injury.
 
 ## Local environment
 
@@ -64,9 +87,3 @@ FANTASYPROS_API_KEY=your_key_here
 ```
 
 Yahoo OAuth fields are scaffolded in `.env.example` for future API integration. Yahoo approval is not required for the current manual draft-assistant workflow.
-
-## v0.3.6 — real draft state by team
-
-PatBot records each real draft selection by overall pick and automatically maps it to the correct snake-draft slot. The resulting roster state is passed into simulations, so an opponent who already drafted a QB is less likely to draft another early QB in future simulated picks.
-
-Opponent archetypes are still randomized across the 11 opposing slots. Once the real draft order and manager profiles are available, the next layer is to lock manager identities and tendencies to specific slots.
