@@ -26,7 +26,7 @@ def _print_status_block(title: str, statuses: dict):
 
 def main():
     cfg = load_config()
-    print("PatBot v0.4.1 — refreshing projections, market data, risk and championship-strategy inputs...")
+    print("PatBot v0.4.2 — refreshing projections, market data, risk and championship-strategy inputs...")
     print(
         "This checks public feeds, the Premium FantasyPros market/injury/news/history feeds, "
         "and any local private Athletic workbook."
