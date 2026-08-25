@@ -18,7 +18,7 @@ APP_HOST = "https://api.sleeper.app"
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/126.0 Safari/537.36 PatBot/0.3.7"
+    "Chrome/126.0 Safari/537.36 PatBot/0.3.9"
 )
 
 FALLBACK_BYES_2026 = {
@@ -285,6 +285,10 @@ def build_live_dataframe(config: dict) -> tuple[pd.DataFrame, dict]:
                 "games_projected": float(stats.get("gp") or 17),
                 "years_exp": years_exp,
                 "is_rookie": bool(is_rookie),
+                # Keep the provider stat line locally in the generated CSV so
+                # Model Diagnostics can re-score the same projection under
+                # counterfactual league rules. Generated snapshots are gitignored.
+                "raw_stats_json": json.dumps(stats, separators=(",", ":"), sort_keys=True),
             })
 
         time.sleep(0.20)
@@ -352,6 +356,7 @@ def build_live_dataframe(config: dict) -> tuple[pd.DataFrame, dict]:
         ),
         "important_note": "K/DEF use provider projected points until Yahoo league settings import.",
         "rookie_field": "is_rookie derived from Sleeper years_exp when available",
+        "diagnostics_raw_stats": "raw_stats_json retained only in local generated snapshot for scoring sensitivity tests",
     }
     return df, meta
 
