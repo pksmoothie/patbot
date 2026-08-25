@@ -23,8 +23,8 @@ from patbot.sim import compare_candidates
 st.set_page_config(page_title="PatBot Draft Room", layout="wide")
 st.title("PatBot — 2026 Draft Room")
 st.caption(
-    "v0.3.9 • full-board FantasyPros • model diagnostics • Athletic custom rankings • "
-    "paired simulations • early-pick lookahead"
+    "v0.4.0 • availability-risk Monte Carlo • FantasyPros injury/history/news • "
+    "full-board market data • Athletic custom rankings • early-pick lookahead"
 )
 
 cfg = load_config()
@@ -60,7 +60,9 @@ if athletic_upload is not None:
     st.sidebar.caption("Click Refresh live 2026 data to merge the new workbook into PatBot.")
 
 if st.sidebar.button("Refresh live 2026 data", use_container_width=True):
-    with st.spinner("Refreshing projections, ADP and independent/custom rankings..."):
+    with st.spinner(
+        "Refreshing projections, market data, six-year availability history, injuries and risk news..."
+    ):
         try:
             _, _, meta = refresh_snapshot(cfg, LIVE_CSV, LIVE_META)
             for key in ["sim_summary", "sim_details", "diag_summary", "diag_details"]:
@@ -120,6 +122,22 @@ if market_status:
                 st.write(line)
                 if status.get("warning"):
                     st.caption(f"⚠️ {status['warning']}")
+            else:
+                st.write(f"⚠️ {source}: {status.get('error', 'unavailable')}")
+
+risk_status = meta.get("risk_sources", {})
+if risk_status:
+    with st.expander("Risk & availability source status"):
+        for source, status in risk_status.items():
+            if status.get("ok"):
+                line = f"✅ {source}"
+                if "matched" in status:
+                    line += f": matched {status.get('matched', '?')} players"
+                if status.get("seasons"):
+                    line += f" • seasons {', '.join(str(x) for x in status['seasons'])}"
+                st.write(line)
+                if status.get("note"):
+                    st.caption(status["note"])
             else:
                 st.write(f"⚠️ {source}: {status.get('error', 'unavailable')}")
 
@@ -242,8 +260,9 @@ board = engine.recommend(
     top_n=18,
 )
 
-tab_board, tab_rosters, tab_log, tab_setup, tab_sim, tab_diag = st.tabs([
+tab_board, tab_risk, tab_rosters, tab_log, tab_setup, tab_sim, tab_diag = st.tabs([
     "Draft Board",
+    "Risk & Availability",
     "Team Rosters",
     "Draft Log",
     "Team Setup",
@@ -265,6 +284,7 @@ with tab_board:
         else:
             preferred = [
                 "name", "team", "pos", "score", "proj_points", "vorp",
+                "risk_score", "catastrophic_miss_probability", "off_field_miss_probability",
                 "athletic_rank", "athletic_vorp", "athletic_points",
                 "adp", "expert_rank", "consensus_value", "consensus_tier",
                 "tier_cliff", "survive_next_pct", "scarcity", "bye",
@@ -277,6 +297,9 @@ with tab_board:
                 "score": "PatBot",
                 "proj_points": "PatBot Proj",
                 "vorp": "PatBot VORP",
+                "risk_score": "Risk Score",
+                "catastrophic_miss_probability": "4+ Game Tail",
+                "off_field_miss_probability": "Off-field Event",
                 "athletic_rank": "Athletic RK",
                 "athletic_vorp": "Athletic VORP",
                 "athletic_points": "Athletic Pts",
@@ -299,7 +322,7 @@ with tab_board:
         mine = players[players["player_id"].isin(my_roster_ids)]
         roster_cols = [
             c
-            for c in ["name", "team", "pos", "adp", "proj_points", "bye"]
+            for c in ["name", "team", "pos", "adp", "proj_points", "risk_score", "bye"]
             if c in mine.columns
         ]
         if mine.empty:
@@ -326,6 +349,79 @@ with tab_board:
             st.dataframe(counts, use_container_width=True, hide_index=True)
         else:
             st.write("—")
+
+# ---------------------------------------------------------------------
+# Risk & availability
+# ---------------------------------------------------------------------
+with tab_risk:
+    st.subheader("Risk & Availability")
+    st.write(
+        "PatBot now keeps the source projection intact, then models availability separately. "
+        "Historical games and age shape the injury tail; FantasyPros current injury reports "
+        "shape near-term risk; recent risk news and dated manual flags can add an off-field tail."
+    )
+    st.caption(
+        "In Monte Carlo runs, missed games are sampled rather than treated as certain. PatBot "
+        "credits partial replacement-player production during missed games, so an injury-prone "
+        "star is not treated as scoring zero for your lineup. Risk is also a modest input to the "
+        "pick score. This layer does not assume that a legal/discipline event will occur."
+    )
+
+    risk_cols = [
+        "name", "team", "pos", "fp_age", "adp", "risk_score",
+        "history_seasons_observed", "history_weighted_games", "history_missed_rate",
+        "catastrophic_miss_probability", "minor_miss_lambda",
+        "current_injury_status", "current_play_probability",
+        "off_field_risk_level", "off_field_miss_probability",
+        "off_field_max_missed_games", "risk_note",
+    ]
+    available_risk_cols = [c for c in risk_cols if c in players.columns]
+    if "risk_score" not in players.columns:
+        st.warning("Risk data is not in this snapshot yet. Click Refresh live 2026 data.")
+    else:
+        risk_view = players[available_risk_cols].copy()
+        if "adp" in risk_view.columns:
+            risk_view = risk_view.sort_values(["adp", "risk_score"], ascending=[True, False]).head(180)
+        risk_view = risk_view.rename(columns={
+            "name": "Player",
+            "team": "Team",
+            "pos": "Pos",
+            "fp_age": "Age",
+            "adp": "ADP",
+            "risk_score": "Risk Score",
+            "history_seasons_observed": "History Seasons",
+            "history_weighted_games": "Weighted Games",
+            "history_missed_rate": "Hist Miss Rate",
+            "catastrophic_miss_probability": "4+ Game Tail",
+            "minor_miss_lambda": "Minor Miss λ",
+            "current_injury_status": "Current Status",
+            "current_play_probability": "Play Prob",
+            "off_field_risk_level": "News Risk",
+            "off_field_miss_probability": "Off-field Event",
+            "off_field_max_missed_games": "Off-field Max Games",
+            "risk_note": "Why",
+        })
+        st.dataframe(risk_view, use_container_width=True, hide_index=True)
+
+        focus = players[players["name"].isin([
+            "Christian McCaffrey", "Puka Nacua", "Ja'Marr Chase"
+        ])].copy()
+        if not focus.empty:
+            st.subheader("Current 1.03 risk profiles")
+            for _, row in focus.sort_values("name").iterrows():
+                with st.expander(str(row["name"])):
+                    st.write(
+                        f"Risk score: **{float(row.get('risk_score', 0)):.3f}** • "
+                        f"4+ game tail: **{100 * float(row.get('catastrophic_miss_probability', 0)):.1f}%** • "
+                        f"off-field event: **{100 * float(row.get('off_field_miss_probability', 0)):.1f}%**"
+                    )
+                    if pd.notna(row.get("history_weighted_games")):
+                        st.write(
+                            f"Weighted recent availability: **{float(row['history_weighted_games']):.1f} games** "
+                            f"across {int(row.get('history_seasons_observed', 0))} observed seasons."
+                        )
+                    if str(row.get("risk_note") or "").strip():
+                        st.caption(str(row["risk_note"]))
 
 # ---------------------------------------------------------------------
 # All real rosters
@@ -431,9 +527,9 @@ with tab_sim:
             "before the pick is made."
         )
         st.caption(
-            "All candidates use common random numbers — run #1 is the same room "
-            "for every candidate — so close comparisons carry less simulation noise. "
-            "The score is a lineup-aware construction score, not championship probability."
+            "All candidates use common random numbers — run #1 is the same room and the same "
+            "availability-shock stream for every candidate. Missing games receive partial "
+            "replacement value. The score is a lineup-aware construction score, not championship probability."
         )
 
         real_opp_picks = sum(
@@ -486,7 +582,7 @@ with tab_sim:
             st.warning("Select at least two candidates to compare.")
         elif st.button("Run candidate simulations", type="primary"):
             with st.spinner(
-                f"Running {runs * len(candidate_ids):,} paired draft paths with lookahead..."
+                f"Running {runs * len(candidate_ids):,} paired risk-adjusted draft paths with lookahead..."
             ):
                 summary, details = compare_candidates(
                     engine,
@@ -511,24 +607,34 @@ with tab_sim:
                 hide_index=True,
             )
 
-            st.subheader("What tends to come back")
+            st.subheader("What tends to happen next")
             for detail in st.session_state.sim_details:
                 with st.expander(detail["candidate"]):
                     st.write(
-                        f"Average lineup score: **{detail['avg_lineup_score']:.2f}** "
-                        f"(25th–75th percentile: "
-                        f"{detail['p25_lineup_score']:.2f}–"
-                        f"{detail['p75_lineup_score']:.2f})"
+                        f"Average lineup score: **{detail['avg_lineup_score']:.2f}** • "
+                        f"10th percentile: **{detail['p10_lineup_score']:.2f}** • "
+                        f"25th–75th: **{detail['p25_lineup_score']:.2f}–{detail['p75_lineup_score']:.2f}**"
                     )
-                    c1, c2 = st.columns(2)
+                    st.write(
+                        f"Average candidate games: **{detail['avg_candidate_games']:.2f}** • "
+                        f"4+ game tail event: **{detail['candidate_catastrophic_pct']:.1f}%** • "
+                        f"off-field event: **{detail['candidate_off_field_pct']:.1f}%**"
+                    )
+                    c0, c1, c2 = st.columns(3)
+                    with c0:
+                        st.write("**Pick immediately after us**")
+                        st.dataframe(
+                            pd.DataFrame(detail["most_common_immediate_next_pick"]),
+                            hide_index=True,
+                        )
                     with c1:
-                        st.write("**Most common second PatBot pick**")
+                        st.write("**Second PatBot pick**")
                         st.dataframe(
                             pd.DataFrame(detail["most_common_second_pick"]),
                             hide_index=True,
                         )
                     with c2:
-                        st.write("**Most common third PatBot pick**")
+                        st.write("**Third PatBot pick**")
                         st.dataframe(
                             pd.DataFrame(detail["most_common_third_pick"]),
                             hide_index=True,
@@ -541,7 +647,7 @@ with tab_diag:
     st.subheader("Allen / elite-TE diagnostics")
     st.write(
         "This isolates what is driving the recurring Round 2 TE and Round 3 Josh Allen "
-        "paths. Every scenario uses the same random rooms and the same real-manager model; "
+        "paths. Every scenario uses the same random rooms, risk model and real-manager model; "
         "only one scoring/model ingredient is changed at a time."
     )
 
@@ -572,7 +678,7 @@ with tab_diag:
 
         st.caption(
             "Scoring sensitivity scenarios re-score the exact Sleeper stat projections stored "
-            "in your local snapshot. The paid Athletic workbook remains local and is never committed."
+            "in your local snapshot while holding the availability-risk model constant."
         )
 
         if st.button("Run Allen / TE diagnostics", type="primary"):
@@ -626,6 +732,6 @@ with tab_diag:
 
 st.divider()
 st.caption(
-    "v0.3.9: FantasyPros now uses its documented full-player ECR/ADP fields; local "
-    "Sleeper stat lines support counterfactual scoring diagnostics for Allen and elite TEs."
+    "v0.4.0: historical availability, current injuries and off-field uncertainty now create "
+    "explicit Monte Carlo tails with partial replacement value; simulations also show the pick immediately after PatBot."
 )
