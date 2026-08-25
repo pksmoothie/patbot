@@ -118,6 +118,43 @@ class FastDraftSimulator:
         self.lookahead_vorp_weight = float(lookcfg.get("pair_vorp_weight", 0.02))
         self.lookahead_max_gap = max(1, int(lookcfg.get("max_gap_picks", 24)))
 
+        # v0.4 explicit availability tails. Missing risk fields fall back to a
+        # deterministic projection, so old/synthetic test snapshots still work.
+        riskcfg = self.cfg.get("risk_model", {})
+        self.risk_enabled = bool(riskcfg.get("enabled", False)) and (
+            "catastrophic_miss_probability" in self.players.columns
+        )
+        self.games_projected = pd.to_numeric(
+            self.players.get("games_projected", pd.Series([17.0] * self.n)),
+            errors="coerce",
+        ).fillna(17.0).clip(lower=1.0, upper=17.0).to_numpy(float)
+        self.catastrophic_prob = pd.to_numeric(
+            self.players.get("catastrophic_miss_probability", pd.Series([0.0] * self.n)),
+            errors="coerce",
+        ).fillna(0.0).clip(lower=0.0, upper=1.0).to_numpy(float)
+        self.minor_miss_lambda = pd.to_numeric(
+            self.players.get("minor_miss_lambda", pd.Series([0.0] * self.n)),
+            errors="coerce",
+        ).fillna(0.0).clip(lower=0.0).to_numpy(float)
+        self.off_field_prob = pd.to_numeric(
+            self.players.get("off_field_miss_probability", pd.Series([0.0] * self.n)),
+            errors="coerce",
+        ).fillna(0.0).clip(lower=0.0, upper=1.0).to_numpy(float)
+        self.off_field_max_games = pd.to_numeric(
+            self.players.get("off_field_max_missed_games", pd.Series([0.0] * self.n)),
+            errors="coerce",
+        ).fillna(0.0).clip(lower=0.0).to_numpy(int)
+        self.catastrophic_min_games = max(1, int(riskcfg.get("catastrophic_min_missed_games", 4)))
+        self.catastrophic_max_games = max(
+            self.catastrophic_min_games,
+            int(riskcfg.get("catastrophic_max_missed_games", 9)),
+        )
+        capture_cfg = riskcfg.get("replacement_capture_by_position", {})
+        self.replacement_capture = np.array([
+            float(capture_cfg.get(p, 0.60 if p in {"RB", "WR"} else 0.65))
+            for p in self.pos
+        ])
+
         self.min_round_k = int(engine.engine_cfg.get("min_round_k", 13))
         self.min_round_def = int(engine.engine_cfg.get("min_round_def", 13))
         self.bench_caps = engine.engine_cfg.get("bench_position_caps", {})
@@ -139,6 +176,43 @@ class FastDraftSimulator:
         ranks = np.empty(len(values), dtype=float)
         ranks[order] = np.arange(1, len(values) + 1, dtype=float)
         return ranks / max(len(values), 1)
+
+    def _sample_run_projection(self, rng: np.random.Generator) -> tuple[np.ndarray, dict]:
+        if not self.risk_enabled:
+            return self.proj.copy(), {
+                "games": self.games_projected.copy(),
+                "catastrophic": np.zeros(self.n, dtype=bool),
+                "off_field": np.zeros(self.n, dtype=bool),
+            }
+
+        minor_missed = rng.poisson(self.minor_miss_lambda)
+        catastrophic = rng.random(self.n) < self.catastrophic_prob
+        catastrophic_extra = rng.integers(
+            self.catastrophic_min_games,
+            self.catastrophic_max_games + 1,
+            size=self.n,
+        ) * catastrophic.astype(int)
+
+        off_field = rng.random(self.n) < self.off_field_prob
+        off_draw = np.floor(
+            rng.random(self.n) * np.maximum(self.off_field_max_games, 1)
+        ).astype(int) + 1
+        off_extra = off_draw * off_field.astype(int)
+
+        missed = minor_missed + catastrophic_extra + off_extra
+        games = np.clip(self.games_projected - missed, 0.0, 17.0)
+        active_ppg = self.proj / np.maximum(self.games_projected, 1.0)
+        replacement_ppg = self.replacement / 17.0
+        additional_missed = np.maximum(0.0, self.games_projected - games)
+        sampled = (
+            active_ppg * games
+            + replacement_ppg * additional_missed * self.replacement_capture
+        )
+        return sampled, {
+            "games": games,
+            "catastrophic": catastrophic,
+            "off_field": off_field,
+        }
 
     def _archetype_assignments(self, rng: np.random.Generator) -> dict[int, str]:
         opponent_slots = [s for s in range(1, self.teams + 1) if s != self.slot]
@@ -479,14 +553,16 @@ class FastDraftSimulator:
 
         return best_idx
 
-    def evaluate_roster(self, mine: list[int]) -> dict:
+    def evaluate_roster(self, mine: list[int], projection_override: np.ndarray | None = None) -> dict:
         rcfg = self.engine.roster_cfg
         evalcfg = self.roster_eval_cfg
+        proj = self.proj if projection_override is None else projection_override
+        vorp = proj - self.replacement
 
         by_pos = {}
         for p in self.POSITIONS:
             idxs = [i for i in mine if self.pos[i] == p]
-            idxs.sort(key=lambda i: self.proj[i], reverse=True)
+            idxs.sort(key=lambda i: proj[i], reverse=True)
             by_pos[p] = idxs
 
         starters = []
@@ -507,17 +583,17 @@ class FastDraftSimulator:
             for i in mine
             if i not in used and self.pos[i] in set(rcfg.get("flex_eligible", []))
         ]
-        flex_pool.sort(key=lambda i: self.proj[i], reverse=True)
+        flex_pool.sort(key=lambda i: proj[i], reverse=True)
         flex_chosen = flex_pool[:flex_need]
         starters.extend(flex_chosen)
         used.update(flex_chosen)
         if len(flex_chosen) < flex_need:
             missing["FLEX"] = flex_need - len(flex_chosen)
 
-        starter_vorp = float(np.sum(self.vorp[starters])) if starters else 0.0
+        starter_vorp = float(np.sum(vorp[starters])) if starters else 0.0
         bench = [i for i in mine if i not in used and self.pos[i] not in {"K", "DEF"}]
         bench_vorp = (
-            float(np.sum(np.maximum(self.vorp[bench], 0.0)))
+            float(np.sum(np.maximum(vorp[bench], 0.0)))
             if bench
             else 0.0
         )
@@ -591,8 +667,12 @@ class FastDraftSimulator:
         lineup_scores = np.empty(runs, dtype=float)
         starter_vorps = np.empty(runs, dtype=float)
         total_projections = np.empty(runs, dtype=float)
+        candidate_games = np.empty(runs, dtype=float)
+        candidate_catastrophic = np.zeros(runs, dtype=bool)
+        candidate_off_field = np.zeros(runs, dtype=bool)
         second_names = Counter()
         third_names = Counter()
+        immediate_next_names = Counter()
 
         base_available = np.ones(self.n, dtype=bool)
         if drafted_idx:
@@ -654,7 +734,7 @@ class FastDraftSimulator:
                         third_names[self.names[idx]] += 1
 
                 else:
-                    self._take_opponent_pick(
+                    opp_idx, _ = self._take_opponent_pick(
                         pick,
                         available,
                         opp_counts,
@@ -662,11 +742,17 @@ class FastDraftSimulator:
                         market_latent,
                         custom_noise_base,
                     )
+                    if pick == int(current_pick) + 1:
+                        immediate_next_names[self.names[opp_idx]] += 1
 
-            eval_result = self.evaluate_roster(mine)
+            run_proj, risk_meta = self._sample_run_projection(rng)
+            eval_result = self.evaluate_roster(mine, projection_override=run_proj)
             lineup_scores[run] = eval_result["lineup_score"]
             starter_vorps[run] = eval_result["starter_vorp"]
-            total_projections[run] = float(np.sum(self.proj[mine]))
+            total_projections[run] = float(np.sum(run_proj[mine]))
+            candidate_games[run] = float(risk_meta["games"][candidate_idx])
+            candidate_catastrophic[run] = bool(risk_meta["catastrophic"][candidate_idx])
+            candidate_off_field[run] = bool(risk_meta["off_field"][candidate_idx])
 
         def top_counter(counter: Counter, n: int = 5):
             total = sum(counter.values()) or 1
@@ -683,13 +769,19 @@ class FastDraftSimulator:
             "candidate_id": str(candidate_id),
             "runs": runs,
             "avg_lineup_score": round(float(np.mean(lineup_scores)), 2),
+            "p10_lineup_score": round(float(np.percentile(lineup_scores, 10)), 2),
             "p25_lineup_score": round(float(np.percentile(lineup_scores, 25)), 2),
             "p75_lineup_score": round(float(np.percentile(lineup_scores, 75)), 2),
             "avg_starter_vorp": round(float(np.mean(starter_vorps)), 2),
             "avg_roster_projected_points": round(float(np.mean(total_projections)), 2),
+            "avg_candidate_games": round(float(np.mean(candidate_games)), 2),
+            "candidate_catastrophic_pct": round(100.0 * float(np.mean(candidate_catastrophic)), 1),
+            "candidate_off_field_pct": round(100.0 * float(np.mean(candidate_off_field)), 1),
+            "most_common_immediate_next_pick": top_counter(immediate_next_names),
             "most_common_second_pick": top_counter(second_names),
             "most_common_third_pick": top_counter(third_names),
             "lookahead_enabled": self.lookahead_enabled,
+            "risk_enabled": self.risk_enabled,
         }
 
 
@@ -731,8 +823,8 @@ def compare_candidates(
     results = []
 
     # Common random numbers: every candidate faces the same simulated room on
-    # run 1, the same room on run 2, etc. This dramatically reduces noise in
-    # close comparisons such as Puka vs. Chase.
+    # run 1, the same room on run 2, etc. Risk shocks are sampled from the same
+    # seeded stream as well, so close comparisons keep paired downside paths.
     for pid in candidate_ids:
         results.append(
             sim.simulate_candidate(
@@ -752,10 +844,14 @@ def compare_candidates(
             {
                 "Candidate": r["candidate"],
                 "Avg Lineup Score": r["avg_lineup_score"],
+                "10th %ile": r["p10_lineup_score"],
                 "25th %ile": r["p25_lineup_score"],
                 "75th %ile": r["p75_lineup_score"],
                 "Avg Starter VORP": r["avg_starter_vorp"],
                 "Avg Drafted Proj": r["avg_roster_projected_points"],
+                "Avg Candidate Games": r["avg_candidate_games"],
+                "Catastrophic Tail %": r["candidate_catastrophic_pct"],
+                "Off-field Event %": r["candidate_off_field_pct"],
                 "Runs": r["runs"],
             }
             for r in results
