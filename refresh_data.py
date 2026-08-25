@@ -4,8 +4,8 @@ from patbot.sleeper import refresh_snapshot, SleeperDataError
 
 def main():
     cfg = load_config()
-    print("PatBot v0.3.8 — refreshing 2026 projections, market ADP and ranking sources...")
-    print("This checks public feeds plus any local private Athletic workbook.")
+    print("PatBot v0.3.9 — refreshing 2026 projections, full-board FantasyPros and ranking sources...")
+    print("This checks public feeds plus any local private Athletic workbook and stores raw Sleeper stats for diagnostics.")
     try:
         csv_path, meta_path, meta = refresh_snapshot(cfg)
     except SleeperDataError as exc:
