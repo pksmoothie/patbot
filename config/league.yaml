@@ -93,8 +93,8 @@ draft_engine:
     roster_fit: 0.08
 
   injury_risk_penalty: 8.0
-  min_round_k: 13
-  min_round_def: 13
+  min_round_k: 15
+  min_round_def: 14
 
   bench_position_caps:
     QB: 2
@@ -273,6 +273,28 @@ championship_strategy:
     - {name: Build, through_round: 7, upside_weight: 0.03, risk_penalty_multiplier: 0.85}
     - {name: Upside, through_round: 11, upside_weight: 0.08, risk_penalty_multiplier: 0.55}
     - {name: Lottery, through_round: 15, upside_weight: 0.14, risk_penalty_multiplier: 0.30}
+
+# PatBot treats K and D/ST as replaceable roster slots rather than places to
+# spend meaningful draft capital. The current draft engine blocks them before
+# these rounds; when full 15-round simulation is enabled, these same preferences
+# will be hard constraints there as well.
+special_teams_strategy:
+  draft:
+    defense_round: 14
+    kicker_round: 15
+    rostered_defenses: 1
+    rostered_kickers: 1
+    draft_backup_defense: false
+    draft_backup_kicker: false
+  inseason:
+    defense:
+      mode: stream_weekly
+      primary_objective: weakest_opposing_offense
+      hold_elite_defense_over_bad_matchup: false
+      rostered_defenses: 1
+    kicker:
+      mode: replaceable_single_kicker
+      rostered_kickers: 1
 
 opponent_archetypes:
   # 11 opponents + PatBot = 12 teams.
