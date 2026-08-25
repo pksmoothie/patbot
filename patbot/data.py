@@ -3,6 +3,7 @@ import pandas as pd
 
 REQUIRED = {"player_id", "name", "team", "pos", "adp", "proj_points"}
 
+
 def load_players(path: str | Path) -> pd.DataFrame:
     df = pd.read_csv(path)
     missing = REQUIRED - set(df.columns)
@@ -24,6 +25,11 @@ def load_players(path: str | Path) -> pd.DataFrame:
         "provider_ppr", "games_projected", "fp_ecr", "fp_adp",
         "fd_rank", "expert_rank", "market_adp", "sleeper_adp",
         "consensus_value", "consensus_tier", "static_vorp",
+        "fp_age", "history_seasons_observed", "history_weighted_games",
+        "history_missed_rate", "current_play_probability", "age_tail_bonus",
+        "catastrophic_miss_probability", "minor_miss_lambda",
+        "off_field_miss_probability", "off_field_max_missed_games",
+        "risk_score", "sleeper_current_injury_risk",
     ]
     for col in numeric_cols:
         if col in df:
