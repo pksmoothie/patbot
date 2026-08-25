@@ -88,6 +88,45 @@ class DraftEngine:
             return 0.05
         return 0.45
 
+    def _apply_special_teams_strategy(
+        self,
+        available: pd.DataFrame,
+        round_number: int,
+        roster_positions: list[str],
+    ) -> pd.DataFrame:
+        """Keep D/ST and kicker cheap, and reserve the final round for kicker.
+
+        PatBot streams defense in-season, so draft capital belongs on offensive
+        optionality until Round 14. If a D/ST is still needed in Round 14, force
+        one there. If a kicker is still needed in Round 15, force one there.
+        """
+        out = available
+        counts = Counter(roster_positions)
+        cfg = self.config.get("special_teams_strategy", {}).get("draft", {})
+        defense_round = int(cfg.get("defense_round", self.engine_cfg.get("min_round_def", 14)))
+        kicker_round = int(cfg.get("kicker_round", self.engine_cfg.get("min_round_k", 15)))
+        target_def = int(cfg.get("rostered_defenses", 1))
+        target_k = int(cfg.get("rostered_kickers", 1))
+
+        def_mask = out["pos"].eq("DEF")
+        k_mask = out["pos"].eq("K")
+
+        if round_number < defense_round:
+            out.loc[def_mask, "score"] -= 1000.0
+        elif counts["DEF"] < target_def and def_mask.any() and round_number == defense_round:
+            out.loc[def_mask, "score"] += 2000.0
+        elif counts["DEF"] >= target_def:
+            out.loc[def_mask, "score"] -= 2000.0
+
+        if round_number < kicker_round:
+            out.loc[k_mask, "score"] -= 1000.0
+        elif counts["K"] < target_k and k_mask.any() and round_number >= kicker_round:
+            out.loc[k_mask, "score"] += 3000.0
+        elif counts["K"] >= target_k:
+            out.loc[k_mask, "score"] -= 2000.0
+
+        return out
+
     def recommend(self, current_pick: int, drafted_ids, roster_positions, top_n: int = 12):
         drafted_ids = {str(x) for x in drafted_ids}
         available = self.players[~self.players["player_id"].isin(drafted_ids)].copy()
@@ -166,10 +205,11 @@ class DraftEngine:
             self.engine_cfg.get("injury_risk_penalty", 0)
         ) * risk_multiplier
 
-        if round_number < int(self.engine_cfg.get("min_round_k", 13)):
-            available.loc[available["pos"] == "K", "score"] -= 35
-        if round_number < int(self.engine_cfg.get("min_round_def", 13)):
-            available.loc[available["pos"] == "DEF", "score"] -= 35
+        available = self._apply_special_teams_strategy(
+            available,
+            round_number=round_number,
+            roster_positions=roster_positions,
+        )
 
         available["next_patbot_pick"] = next_pick
         available["survive_next_pct"] = (100 * available["survive_next"]).round(1)
