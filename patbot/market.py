@@ -17,7 +17,7 @@ load_dotenv()
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/126.0 Safari/537.36 PatBot/0.3.8"
+    "Chrome/126.0 Safari/537.36 PatBot/0.3.9"
 )
 
 FP_API_BASE = "https://api.fantasypros.com/public/v2/json"
@@ -117,48 +117,77 @@ def _api_rank(player: dict, candidates: list[str]) -> float:
     return np.nan
 
 
-def fetch_fantasypros_api_ecr(
+def fetch_fantasypros_api_board(
     player_names: list[str],
     season: int = 2026,
 ) -> pd.DataFrame:
+    """Fetch full-board FantasyPros PPR ECR and ADP in one official API call.
+
+    v0.3.2 used consensus-rankings?position=ALL, which returned only a
+    10-player slice for the user's API tier. FantasyPros documents the Players
+    endpoint with ecr=included as the full player metadata feed and includes
+    rank_ecr_ppr / rank_adp_ppr on each player, so v0.3.9 uses that endpoint.
+    """
     data = _fp_get(
-        f"nfl/{season}/consensus-rankings",
-        {"position": "ALL", "scoring": "PPR", "week": 0},
+        "nfl/players",
+        {"ecr": "included", "show": "pos_rank"},
     )
     players = data.get("players") or []
     known = {normalize_name(x): x for x in player_names}
     rows = []
+
     for p in players:
         raw_name = _api_player_name(p)
         name = _known_name_match(raw_name, known)
-        rank = _api_rank(p, ["rank_ecr", "rank", "rank_ave"])
-        if name and not np.isnan(rank) and rank > 0:
-            rows.append({"name": name, "fp_ecr": rank})
+        if not name:
+            continue
+
+        ecr = _api_rank(p, ["rank_ecr_ppr", "rank_ecr", "rank", "rank_ave"])
+        adp = _api_rank(p, ["rank_adp_ppr", "rank_adp", "rank_ecr_ppr", "rank_ecr"])
+        if np.isnan(ecr) and np.isnan(adp):
+            continue
+
+        rows.append({
+            "name": name,
+            "fp_ecr": ecr if not np.isnan(ecr) and ecr > 0 else np.nan,
+            "fp_adp": adp if not np.isnan(adp) and adp > 0 else np.nan,
+        })
+
     if not rows:
+        raise ValueError("FantasyPros Players API returned no matched PatBot players.")
+
+    board = (
+        pd.DataFrame(rows)
+        .drop_duplicates("name", keep="first")
+        .reset_index(drop=True)
+    )
+    if board["fp_ecr"].notna().sum() == 0:
+        raise ValueError("FantasyPros Players API returned no usable PPR ECR values.")
+    if board["fp_adp"].notna().sum() == 0:
+        raise ValueError("FantasyPros Players API returned no usable PPR ADP values.")
+    return board
+
+
+def fetch_fantasypros_api_ecr(
+    player_names: list[str],
+    season: int = 2026,
+) -> pd.DataFrame:
+    board = fetch_fantasypros_api_board(player_names, season)
+    out = board[["name", "fp_ecr"]].dropna(subset=["fp_ecr"])
+    if out.empty:
         raise ValueError("FantasyPros API ECR returned no matched PatBot players.")
-    return pd.DataFrame(rows).drop_duplicates("name", keep="first")
+    return out.reset_index(drop=True)
 
 
 def fetch_fantasypros_api_adp(
     player_names: list[str],
     season: int = 2026,
 ) -> pd.DataFrame:
-    data = _fp_get(
-        f"nfl/{season}/consensus-rankings",
-        {"position": "ALL", "scoring": "PPR", "week": 0, "type": "ADP"},
-    )
-    players = data.get("players") or []
-    known = {normalize_name(x): x for x in player_names}
-    rows = []
-    for p in players:
-        raw_name = _api_player_name(p)
-        name = _known_name_match(raw_name, known)
-        rank = _api_rank(p, ["rank_adp_ppr", "rank_adp", "rank_ecr", "rank"])
-        if name and not np.isnan(rank) and rank > 0:
-            rows.append({"name": name, "fp_adp": rank})
-    if not rows:
+    board = fetch_fantasypros_api_board(player_names, season)
+    out = board[["name", "fp_adp"]].dropna(subset=["fp_adp"])
+    if out.empty:
         raise ValueError("FantasyPros API ADP returned no matched PatBot players.")
-    return pd.DataFrame(rows).drop_duplicates("name", keep="first")
+    return out.reset_index(drop=True)
 
 
 def _read_tables(url: str) -> list[pd.DataFrame]:
@@ -296,10 +325,25 @@ def augment_market_sources(players: pd.DataFrame, config: dict) -> tuple[pd.Data
 
     if source_cfg.get("fantasypros_api", True):
         if _fp_api_key():
-            loaders.extend([
-                ("fantasypros_api_ecr", lambda n: fetch_fantasypros_api_ecr(n, season)),
-                ("fantasypros_api_adp", lambda n: fetch_fantasypros_api_adp(n, season)),
-            ])
+            try:
+                fp_board = fetch_fantasypros_api_board(names, season)
+                out = out.merge(fp_board, on="name", how="left")
+                ecr_matched = int(fp_board["fp_ecr"].notna().sum())
+                adp_matched = int(fp_board["fp_adp"].notna().sum())
+                status["fantasypros_api_ecr"] = {
+                    "ok": ecr_matched > 0,
+                    "matched": ecr_matched,
+                    "endpoint": "nfl/players",
+                }
+                status["fantasypros_api_adp"] = {
+                    "ok": adp_matched > 0,
+                    "matched": adp_matched,
+                    "endpoint": "nfl/players",
+                }
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+                status["fantasypros_api_ecr"] = {"ok": False, "error": error}
+                status["fantasypros_api_adp"] = {"ok": False, "error": error}
         else:
             status["fantasypros_api"] = {
                 "ok": False,
