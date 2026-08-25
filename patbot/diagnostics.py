@@ -329,3 +329,103 @@ def run_model_diagnostics(
         "Runs",
     ]
     return pd.DataFrame(rows)[columns], details
+
+
+def _engine_without_candidate_off_field(
+    base_engine: DraftEngine,
+    candidate_id: str,
+) -> tuple[DraftEngine, float, float]:
+    players = base_engine.players.copy()
+    players["player_id"] = players["player_id"].astype(str)
+    mask = players["player_id"].eq(str(candidate_id))
+    if not mask.any():
+        raise ValueError(f"Candidate {candidate_id} not found in player pool.")
+
+    idx = players.index[mask][0]
+    off_prob = float(pd.to_numeric(players.loc[idx].get("off_field_miss_probability", 0.0), errors="coerce") or 0.0)
+    current_risk = float(pd.to_numeric(players.loc[idx].get("risk_score", players.loc[idx].get("injury_risk", 0.0)), errors="coerce") or 0.0)
+
+    players.loc[idx, "off_field_miss_probability"] = 0.0
+    players.loc[idx, "off_field_max_missed_games"] = 0
+    players.loc[idx, "off_field_risk_level"] = "none"
+
+    # risk.py allocates 15% of its composite risk score to the off-field
+    # component, scaled so a 20% event probability saturates that component.
+    off_component = min(1.0, max(0.0, off_prob) / 0.20) if off_prob > 0 else 0.0
+    adjusted_risk = max(0.0, current_risk - 0.15 * off_component)
+    if "sleeper_current_injury_risk" in players.columns:
+        floor = pd.to_numeric(players.loc[idx, "sleeper_current_injury_risk"], errors="coerce")
+        if pd.notna(floor):
+            adjusted_risk = max(adjusted_risk, float(floor))
+    players.loc[idx, "risk_score"] = adjusted_risk
+    players.loc[idx, "injury_risk"] = adjusted_risk
+    return DraftEngine(players, deepcopy(base_engine.config)), off_prob, adjusted_risk
+
+
+def run_off_field_sensitivity(
+    engine: DraftEngine,
+    current_pick: int,
+    drafted_ids: set[str],
+    my_roster_ids: list[str],
+    candidate_id: str,
+    runs: int = 1000,
+    through_round: int = 8,
+    draft_history: list[dict] | None = None,
+) -> tuple[pd.DataFrame, list[dict]]:
+    """Compare one candidate with its current off-field tail versus the tail disabled.
+
+    Both scenarios use the same room seed and performance/availability random
+    stream. The only change is the candidate's off-field event component and the
+    corresponding small composite-risk-score contribution.
+    """
+    seed = int(engine.config.get("simulation", {}).get("comparison_seed", 20260818))
+    alt_engine, original_off_prob, adjusted_risk = _engine_without_candidate_off_field(
+        engine,
+        str(candidate_id),
+    )
+
+    scenarios = [
+        ("Current risk model", engine),
+        ("Off-field flag disabled", alt_engine),
+    ]
+    rows = []
+    details = []
+    for label, scenario_engine in scenarios:
+        result = FastDraftSimulator(scenario_engine).simulate_candidate(
+            current_pick=current_pick,
+            drafted_ids=drafted_ids,
+            my_roster_ids=my_roster_ids,
+            candidate_id=str(candidate_id),
+            runs=int(runs),
+            through_round=int(through_round),
+            seed=seed,
+            draft_history=draft_history,
+        )
+        result["scenario"] = label
+        details.append(result)
+        rows.append({
+            "Scenario": label,
+            "Avg Lineup Score": result["avg_lineup_score"],
+            "10th %ile": result["p10_lineup_score"],
+            "25th %ile": result["p25_lineup_score"],
+            "75th %ile": result["p75_lineup_score"],
+            "90th %ile": result["p90_lineup_score"],
+            "Avg Candidate Games": result["avg_candidate_games"],
+            "4+ Game Tail %": result["candidate_catastrophic_pct"],
+            "Off-field Event %": result["candidate_off_field_pct"],
+            "Runs": int(runs),
+        })
+
+    baseline = rows[0]
+    for row in rows:
+        row["Δ Avg vs current"] = round(row["Avg Lineup Score"] - baseline["Avg Lineup Score"], 2)
+        row["Δ P10 vs current"] = round(row["10th %ile"] - baseline["10th %ile"], 2)
+
+    details[0]["configured_off_field_probability"] = original_off_prob
+    details[1]["adjusted_risk_score"] = adjusted_risk
+    columns = [
+        "Scenario", "Avg Lineup Score", "Δ Avg vs current", "10th %ile",
+        "Δ P10 vs current", "25th %ile", "75th %ile", "90th %ile",
+        "Avg Candidate Games", "4+ Game Tail %", "Off-field Event %", "Runs",
+    ]
+    return pd.DataFrame(rows)[columns], details
