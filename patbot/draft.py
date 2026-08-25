@@ -5,6 +5,8 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 
+from .strategy import compute_strategy_metrics, strategy_phase
+
 
 def snake_pick(round_number: int, teams: int, slot: int) -> int:
     within = slot if round_number % 2 else teams + 1 - slot
@@ -132,9 +134,15 @@ class DraftEngine:
             available["expert_pct"] = 0.5
             expert_weight = 0.0
 
-        # Keep the v0.2 engine behavior recognizable, but reserve 10% for independent experts.
+        # Championship metrics are calculated on the full board so the signal
+        # does not jump merely because a few players were already drafted.
+        strategy = compute_strategy_metrics(self.players, levels, self.config).copy()
+        strategy["player_id"] = self.players["player_id"].astype(str).values
+        available["player_id"] = available["player_id"].astype(str)
+        available = available.merge(strategy, on="player_id", how="left")
+
         w = self.engine_cfg["weights"]
-        base_total = sum(float(w[k]) for k in ["vorp","projection","urgency","scarcity","roster_fit"])
+        base_total = sum(float(w[k]) for k in ["vorp", "projection", "urgency", "scarcity", "roster_fit"])
         scale = (1.0 - expert_weight) / base_total
 
         available["score"] = 100 * (
@@ -146,11 +154,18 @@ class DraftEngine:
             + available["expert_pct"] * expert_weight
         )
 
+        round_number = ((current_pick - 1) // teams) + 1
+        phase = strategy_phase(round_number, self.config)
+        upside_weight = float(phase.get("upside_weight", 0.0))
+        risk_multiplier = float(phase.get("risk_penalty_multiplier", 1.0))
+        available["strategy_phase"] = str(phase.get("name", "Baseline"))
+        available["upside_bonus"] = available["league_winner_score"].fillna(0.0) * upside_weight
+        available["score"] += available["upside_bonus"]
+
         available["score"] -= available["injury_risk"].clip(0, 1) * float(
             self.engine_cfg.get("injury_risk_penalty", 0)
-        )
+        ) * risk_multiplier
 
-        round_number = ((current_pick - 1) // teams) + 1
         if round_number < int(self.engine_cfg.get("min_round_k", 13)):
             available.loc[available["pos"] == "K", "score"] -= 35
         if round_number < int(self.engine_cfg.get("min_round_def", 13)):
@@ -158,8 +173,9 @@ class DraftEngine:
 
         available["next_patbot_pick"] = next_pick
         available["survive_next_pct"] = (100 * available["survive_next"]).round(1)
-        for c in ["score", "vorp", "scarcity"]:
-            available[c] = available[c].round(2)
+        for c in ["score", "vorp", "scarcity", "league_winner_score", "q90_points", "upside_bonus"]:
+            if c in available:
+                available[c] = pd.to_numeric(available[c], errors="coerce").round(2)
 
         return available.sort_values(
             ["score", "proj_points", "adp"], ascending=[False, False, True]
@@ -173,6 +189,16 @@ class DraftEngine:
         expert_text = ""
         if pd.notna(row.get("expert_rank")):
             expert_text = f" Independent expert rank: {row['expert_rank']:.1f}."
+        strategy_text = ""
+        if pd.notna(row.get("league_winner_score")):
+            strategy_text = (
+                f" Strategy phase: {row.get('strategy_phase', 'Baseline')}; "
+                f"league-winner upside signal: {float(row['league_winner_score']):.1f}/100"
+            )
+            if pd.notna(row.get("q90_points")):
+                strategy_text += f"; modeled 90th-percentile football outcome: {float(row['q90_points']):.1f} points."
+            else:
+                strategy_text += "."
         return (
             f"{row['name']} ({row['pos']}) is the current model pick."
             f"{tier_text}{expert_text} "
@@ -180,4 +206,5 @@ class DraftEngine:
             f"Estimated chance of surviving to PatBot's next pick "
             f"({int(row['next_patbot_pick'])}): {row['survive_next_pct']:.1f}%. "
             f"Four-player positional drop: {row['scarcity']:.1f} projected points."
+            f"{strategy_text}"
         )
