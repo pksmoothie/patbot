@@ -18,7 +18,7 @@ APP_HOST = "https://api.sleeper.app"
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/126.0 Safari/537.36 PatBot/0.3.9"
+    "Chrome/126.0 Safari/537.36 PatBot/0.4.0"
 )
 
 FALLBACK_BYES_2026 = {
@@ -382,6 +382,20 @@ def refresh_snapshot(
                 "error": f"{type(exc).__name__}: {exc}",
             }
         }
+
+    if config.get("risk_model", {}).get("enabled", True):
+        try:
+            from .risk import augment_risk_sources
+
+            df, risk_status = augment_risk_sources(df, config)
+            meta["risk_sources"] = risk_status
+        except Exception as exc:
+            meta["risk_sources"] = {
+                "pipeline": {
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            }
 
     csv_path = Path(csv_path)
     meta_path = Path(meta_path)
