@@ -181,6 +181,53 @@ simulation:
     pair_vorp_weight: 0.02
     max_gap_picks: 24
 
+risk_model:
+  enabled: true
+  # Premium FantasyPros is capped at one request/second. Refreshing risk history
+  # deliberately spaces calls so PatBot stays inside that limit.
+  fantasypros_request_spacing_seconds: 1.05
+
+  # Historical availability shapes the left tail rather than replacing the
+  # source projection outright. More recent seasons receive more weight.
+  history_seasons: 6
+  history_weights: [0.30, 0.25, 0.18, 0.12, 0.09, 0.06]
+  base_catastrophic_probability: 0.02
+  history_catastrophic_weight: 0.45
+  current_injury_catastrophic_weight: 0.10
+  max_catastrophic_probability: 0.35
+
+  base_minor_miss_lambda: 0.15
+  history_minor_weight: 1.0
+  current_injury_minor_weight: 0.40
+  max_minor_miss_lambda: 1.50
+
+  catastrophic_min_missed_games: 4
+  catastrophic_max_missed_games: 9
+  replacement_capture_by_position:
+    QB: 0.70
+    RB: 0.60
+    WR: 0.60
+    TE: 0.65
+    K: 1.00
+    DEF: 1.00
+
+  # Recent FantasyPros news can create a temporary off-field availability tail.
+  # This is an uncertainty model, not an assumption that discipline will occur.
+  news_medium_event_probability: 0.05
+  news_high_event_probability: 0.18
+  news_medium_max_missed_games: 3
+  news_high_max_missed_games: 6
+
+# Dated manual risk flags are deliberately explicit and expire automatically.
+# They are for uncertainty that structured injury feeds cannot represent well.
+risk_overrides:
+  Puka Nacua:
+    off_field_event_probability: 0.08
+    off_field_max_missed_games: 2
+    confidence: medium
+    expires: "2026-09-15"
+    note: "Temporary 2026 discipline/legal uncertainty flag; this does not assume a suspension."
+
 opponent_archetypes:
   # 11 opponents + PatBot = 12 teams.
   counts:
