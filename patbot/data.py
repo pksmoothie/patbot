@@ -26,8 +26,8 @@ def load_players(path: str | Path) -> pd.DataFrame:
         "fd_rank", "expert_rank", "market_adp", "sleeper_adp",
         "consensus_value", "consensus_tier", "static_vorp",
         "fp_age", "history_seasons_observed", "history_weighted_games",
-        "history_missed_rate", "current_play_probability", "age_tail_bonus",
-        "catastrophic_miss_probability", "minor_miss_lambda",
+        "history_missed_rate", "history_signal_scale", "current_play_probability",
+        "age_tail_bonus", "catastrophic_miss_probability", "minor_miss_lambda",
         "off_field_miss_probability", "off_field_max_missed_games",
         "risk_score", "sleeper_current_injury_risk",
     ]
