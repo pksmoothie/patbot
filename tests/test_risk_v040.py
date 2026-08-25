@@ -42,8 +42,8 @@ def test_risk_layer_builds_history_current_and_manual_tails(monkeypatch):
     monkeypatch.setattr(risk, "_fp_get", fake_get)
 
     players = pd.DataFrame([
-        {"name": "Alpha Runner", "pos": "RB", "injury_risk": 0.0},
-        {"name": "Beta Receiver", "pos": "WR", "injury_risk": 0.0},
+        {"name": "Alpha Runner", "pos": "RB", "injury_risk": 0.0, "years_exp": 5},
+        {"name": "Beta Receiver", "pos": "WR", "injury_risk": 0.0, "years_exp": 4},
     ])
     config = {
         "league": {"season": 2026},
@@ -71,6 +71,25 @@ def test_risk_layer_builds_history_current_and_manual_tails(monkeypatch):
     assert beta["off_field_miss_probability"] >= 0.08
     assert np.isfinite(alpha["risk_score"])
     assert status["manual_risk_overrides"]["matched"] == 1
+
+
+def test_blank_nan_injury_status_is_treated_as_healthy():
+    status, probability = risk._status_probability(None, np.nan)
+    assert status == ""
+    assert probability == 1.0
+
+
+def test_2020_full_schedule_is_normalized_to_full_availability():
+    config = {
+        "risk_model": {
+            "history_seasons": 6,
+            "history_weights": [0.30, 0.25, 0.18, 0.12, 0.09, 0.06],
+        }
+    }
+    seasons, games, missed_rate = risk._history_metrics([(2020, 16)], 2026, config)
+    assert seasons == 1
+    assert games == 17.0
+    assert missed_rate == 0.0
 
 
 class TinyEngine:
