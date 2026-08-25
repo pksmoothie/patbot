@@ -53,4 +53,28 @@ def test_fp_full_board_uses_players_endpoint_once(monkeypatch):
         ["Jahmyr Gibbs", "Bijan Robinson"], 2026
     )
     assert len(board) == 2
-    assert calls == [("nfl/players", {"ecr": "included", "show": "pos_rank"})]
+    assert calls == [(
+        "nfl/players",
+        {"ecr": "included", "show": "pos_rank", "limit": 1000},
+    )]
+
+
+def test_fp_full_board_rejects_truncated_response(monkeypatch):
+    monkeypatch.setattr(
+        market,
+        "_fp_get",
+        lambda path, params: {
+            "count": 517,
+            "players": [
+                {"player_name": "Jahmyr Gibbs", "rank_ecr_ppr": 3, "rank_adp_ppr": 4},
+            ],
+        },
+    )
+
+    try:
+        market.fetch_fantasypros_api_board(["Jahmyr Gibbs"], 2026)
+    except ValueError as exc:
+        assert "truncated response" in str(exc)
+        assert "1 of 517" in str(exc)
+    else:
+        raise AssertionError("Expected truncated FantasyPros response to raise ValueError")
