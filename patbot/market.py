@@ -123,16 +123,22 @@ def fetch_fantasypros_api_board(
 ) -> pd.DataFrame:
     """Fetch full-board FantasyPros PPR ECR and ADP in one official API call.
 
-    v0.3.2 used consensus-rankings?position=ALL, which returned only a
-    10-player slice for the user's API tier. FantasyPros documents the Players
-    endpoint with ecr=included as the full player metadata feed and includes
-    rank_ecr_ppr / rank_adp_ppr on each player, so v0.3.9 uses that endpoint.
+    FantasyPros' Players endpoint defaults to returning only 10 rows even when
+    the response count reports the full player universe. PatBot explicitly asks
+    for 1,000 rows so the Premium API returns the complete NFL board in one call.
     """
     data = _fp_get(
         "nfl/players",
-        {"ecr": "included", "show": "pos_rank"},
+        {"ecr": "included", "show": "pos_rank", "limit": 1000},
     )
     players = data.get("players") or []
+    declared_count = _numeric(data.get("count"))
+    if not np.isnan(declared_count) and declared_count > len(players):
+        raise ValueError(
+            "FantasyPros Players API returned a truncated response "
+            f"({len(players)} of {int(declared_count)} players) even with limit=1000."
+        )
+
     known = {normalize_name(x): x for x in player_names}
     rows = []
 
