@@ -6,6 +6,7 @@ import streamlit as st
 
 from patbot.config import load_config
 from patbot.data import load_players
+from patbot.diagnostics import run_model_diagnostics
 from patbot.draft import DraftEngine, all_team_picks
 from patbot.draft_state import (
     drafted_ids_from_history,
@@ -22,8 +23,8 @@ from patbot.sim import compare_candidates
 st.set_page_config(page_title="PatBot Draft Room", layout="wide")
 st.title("PatBot — 2026 Draft Room")
 st.caption(
-    "v0.3.8 • Athletic custom rankings • paired simulations • early-pick lookahead • "
-    "fixed manager profiles"
+    "v0.3.9 • full-board FantasyPros • model diagnostics • Athletic custom rankings • "
+    "paired simulations • early-pick lookahead"
 )
 
 cfg = load_config()
@@ -62,6 +63,8 @@ if st.sidebar.button("Refresh live 2026 data", use_container_width=True):
     with st.spinner("Refreshing projections, ADP and independent/custom rankings..."):
         try:
             _, _, meta = refresh_snapshot(cfg, LIVE_CSV, LIVE_META)
+            for key in ["sim_summary", "sim_details", "diag_summary", "diag_details"]:
+                st.session_state.pop(key, None)
             st.sidebar.success(f"Updated {meta['draftable_rows']} players.")
             st.rerun()
         except SleeperDataError as exc:
@@ -197,7 +200,7 @@ if st.sidebar.button(
     )
     st.session_state.draft_history.append(record)
 
-    for key in ["sim_summary", "sim_details"]:
+    for key in ["sim_summary", "sim_details", "diag_summary", "diag_details"]:
         st.session_state.pop(key, None)
 
     st.rerun()
@@ -210,13 +213,13 @@ if u1.button(
     disabled=(len(draft_history) == 0),
 ):
     st.session_state.draft_history.pop()
-    for key in ["sim_summary", "sim_details"]:
+    for key in ["sim_summary", "sim_details", "diag_summary", "diag_details"]:
         st.session_state.pop(key, None)
     st.rerun()
 
 if u2.button("Reset draft", use_container_width=True):
     st.session_state.draft_history = []
-    for key in ["sim_summary", "sim_details"]:
+    for key in ["sim_summary", "sim_details", "diag_summary", "diag_details"]:
         st.session_state.pop(key, None)
     st.rerun()
 
@@ -239,12 +242,13 @@ board = engine.recommend(
     top_n=18,
 )
 
-tab_board, tab_rosters, tab_log, tab_setup, tab_sim = st.tabs([
+tab_board, tab_rosters, tab_log, tab_setup, tab_sim, tab_diag = st.tabs([
     "Draft Board",
     "Team Rosters",
     "Draft Log",
     "Team Setup",
     "Simulation Lab",
+    "Model Diagnostics",
 ])
 
 # ---------------------------------------------------------------------
@@ -427,7 +431,7 @@ with tab_sim:
             "before the pick is made."
         )
         st.caption(
-            "All candidates now use common random numbers — run #1 is the same room "
+            "All candidates use common random numbers — run #1 is the same room "
             "for every candidate — so close comparisons carry less simulation noise. "
             "The score is a lineup-aware construction score, not championship probability."
         )
@@ -530,8 +534,98 @@ with tab_sim:
                             hide_index=True,
                         )
 
+# ---------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------
+with tab_diag:
+    st.subheader("Allen / elite-TE diagnostics")
+    st.write(
+        "This isolates what is driving the recurring Round 2 TE and Round 3 Josh Allen "
+        "paths. Every scenario uses the same random rooms and the same real-manager model; "
+        "only one scoring/model ingredient is changed at a time."
+    )
+
+    if not is_my_pick:
+        st.info("Run diagnostics when PatBot is on the clock so the forced anchor pick is well-defined.")
+    elif board.empty:
+        st.write("No candidates available.")
+    else:
+        diagnostic_pool = players[~players["player_id"].isin(drafted_ids)].copy()
+        diagnostic_names = diagnostic_pool["name"].sort_values().tolist()
+        default_anchor = "Ja'Marr Chase" if "Ja'Marr Chase" in diagnostic_names else board.iloc[0]["name"]
+        anchor_name = st.selectbox(
+            "Forced current pick for diagnostics",
+            options=diagnostic_names,
+            index=diagnostic_names.index(default_anchor),
+            help="For the 1.03 question, use Chase unless you specifically want to diagnose another opening.",
+        )
+        anchor_lookup = dict(
+            zip(diagnostic_pool["name"], diagnostic_pool["player_id"].astype(str))
+        )
+        diag_runs = st.slider(
+            "Diagnostic runs per scenario",
+            min_value=100,
+            max_value=600,
+            value=300,
+            step=100,
+        )
+
+        st.caption(
+            "Scoring sensitivity scenarios re-score the exact Sleeper stat projections stored "
+            "in your local snapshot. The paid Athletic workbook remains local and is never committed."
+        )
+
+        if st.button("Run Allen / TE diagnostics", type="primary"):
+            try:
+                with st.spinner(f"Running {diag_runs * 6:,} diagnostic draft paths..."):
+                    diag_summary, diag_details = run_model_diagnostics(
+                        engine,
+                        current_pick=current_pick,
+                        drafted_ids=drafted_ids,
+                        my_roster_ids=my_roster_ids,
+                        candidate_id=anchor_lookup[anchor_name],
+                        runs=diag_runs,
+                        through_round=int(cfg.get("simulation", {}).get("through_round", 8)),
+                        draft_history=draft_history,
+                    )
+                    st.session_state.diag_summary = diag_summary
+                    st.session_state.diag_details = diag_details
+            except Exception as exc:
+                st.error(f"{type(exc).__name__}: {exc}")
+
+        if "diag_summary" in st.session_state:
+            st.subheader("Sensitivity table")
+            st.dataframe(
+                st.session_state.diag_summary,
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "Δ columns are percentage-point changes versus the Baseline. A large Allen drop "
+                "when the completion bonus disappears means scoring is the driver; a large elite-TE "
+                "drop when scarcity is removed means positional cliffs are the driver."
+            )
+
+            st.subheader("Scenario pick distributions")
+            for detail in st.session_state.diag_details:
+                with st.expander(detail["scenario"]):
+                    st.write(detail["description"])
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.write("**Second PatBot pick**")
+                        st.dataframe(
+                            pd.DataFrame(detail["most_common_second_pick"]),
+                            hide_index=True,
+                        )
+                    with c2:
+                        st.write("**Third PatBot pick**")
+                        st.dataframe(
+                            pd.DataFrame(detail["most_common_third_pick"]),
+                            hide_index=True,
+                        )
+
 st.divider()
 st.caption(
-    "v0.3.8: local Athletic custom rankings are merged without entering GitHub; "
-    "candidate simulations are paired; Rounds 2–3 use one-pick-ahead room simulation."
+    "v0.3.9: FantasyPros now uses its documented full-player ECR/ADP fields; local "
+    "Sleeper stat lines support counterfactual scoring diagnostics for Allen and elite TEs."
 )
