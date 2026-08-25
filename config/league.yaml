@@ -228,6 +228,52 @@ risk_overrides:
     expires: "2026-09-15"
     note: "Temporary 2026 discipline/legal uncertainty flag; this does not assume a suspension."
 
+# Championship strategy separates early-round foundation value from late-round
+# optionality. Injury/legal risk is never treated as upside; PatBot simply
+# becomes more willing to tolerate risk when the replacement cost of a bust is low.
+championship_strategy:
+  enabled: true
+  market_edge_scale_picks: 60
+
+  performance_volatility:
+    enabled: true
+    base_sigma_by_position:
+      QB: 0.08
+      RB: 0.14
+      WR: 0.15
+      TE: 0.16
+      K: 0.00
+      DEF: 0.00
+    default_sigma: 0.12
+    early_career_sigma_max: 0.08
+    positive_market_edge_sigma_max: 0.04
+    max_sigma: 0.30
+    factor_floor: 0.60
+    factor_cap: 1.60
+
+  league_winner_components:
+    positional_ceiling: 0.55
+    market_edge: 0.25
+    early_career: 0.20
+
+  # Bench optionality is much more valuable at RB/WR than at a second QB in a
+  # one-QB league. Roster-fit and bench caps still apply separately.
+  late_upside_position_multiplier:
+    QB: 0.45
+    RB: 1.00
+    WR: 1.00
+    TE: 0.75
+    K: 0.00
+    DEF: 0.00
+
+  # Upside weight is applied to a 0-100 league-winner signal. Risk penalty
+  # fades by round, but never becomes a positive bonus merely because a player is risky.
+  round_phases:
+    - {name: Foundation, through_round: 3, upside_weight: 0.01, risk_penalty_multiplier: 1.00}
+    - {name: Build, through_round: 7, upside_weight: 0.03, risk_penalty_multiplier: 0.85}
+    - {name: Upside, through_round: 11, upside_weight: 0.08, risk_penalty_multiplier: 0.55}
+    - {name: Lottery, through_round: 15, upside_weight: 0.14, risk_penalty_multiplier: 0.30}
+
 opponent_archetypes:
   # 11 opponents + PatBot = 12 teams.
   counts:
