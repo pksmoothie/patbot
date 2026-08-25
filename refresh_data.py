@@ -2,10 +2,35 @@ from patbot.config import load_config
 from patbot.sleeper import refresh_snapshot, SleeperDataError
 
 
+def _print_status_block(title: str, statuses: dict):
+    print(f"\n{title}:")
+    if not statuses:
+        print("  WARN no status returned")
+        return
+    for source, status in statuses.items():
+        if status.get("ok"):
+            extra = f" • {status['file']}" if status.get("file") else ""
+            seasons = status.get("seasons")
+            if seasons:
+                extra += f" • seasons {', '.join(str(x) for x in seasons)}"
+            matched = status.get("matched")
+            matched_text = f": {matched} players matched" if matched is not None else ""
+            print(f"  OK   {source}{matched_text}{extra}")
+            if status.get("warning"):
+                print(f"       warning: {status['warning']}")
+            if status.get("note"):
+                print(f"       {status['note']}")
+        else:
+            print(f"  WARN {source}: {status.get('error', 'unavailable')}")
+
+
 def main():
     cfg = load_config()
-    print("PatBot v0.3.9 — refreshing 2026 projections, full-board FantasyPros and ranking sources...")
-    print("This checks public feeds plus any local private Athletic workbook and stores raw Sleeper stats for diagnostics.")
+    print("PatBot v0.4.0 — refreshing 2026 projections, market data and availability risk...")
+    print(
+        "This checks public feeds, the Premium FantasyPros market/injury/news/history feeds, "
+        "and any local private Athletic workbook."
+    )
     try:
         csv_path, meta_path, meta = refresh_snapshot(cfg)
     except SleeperDataError as exc:
@@ -20,15 +45,8 @@ def main():
     print(f"Players:              {meta['draftable_rows']}")
     print(f"Snapshot UTC:         {meta['snapshot_at_utc']}")
 
-    print("\nIndependent source status:")
-    for source, status in meta.get("market_sources", {}).items():
-        if status.get("ok"):
-            extra = f" • {status['file']}" if status.get("file") else ""
-            print(f"  OK   {source}: {status.get('matched', '?')} players matched{extra}")
-            if status.get("warning"):
-                print(f"       warning: {status['warning']}")
-        else:
-            print(f"  WARN {source}: {status.get('error', 'unavailable')}")
+    _print_status_block("Independent source status", meta.get("market_sources", {}))
+    _print_status_block("Risk & availability source status", meta.get("risk_sources", {}))
 
     print("\nNext: run  .\\.venv\\Scripts\\python.exe -m streamlit run app.py")
 
