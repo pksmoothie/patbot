@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date
-import math
 import time
 
 import numpy as np
@@ -323,7 +322,8 @@ def augment_risk_sources(players: pd.DataFrame, config: dict) -> tuple[pd.DataFr
             + 0.15 * age_component
             + 0.15 * off_component
         )
-        risk_score = max(float(row.get("injury_risk") or 0.0), min(1.0, risk_score))
+        existing_risk = _safe_float(row.get("injury_risk"), 0.0)
+        risk_score = max(existing_risk, min(1.0, risk_score))
 
         notes = []
         if seasons_obs:
@@ -355,8 +355,9 @@ def augment_risk_sources(players: pd.DataFrame, config: dict) -> tuple[pd.DataFr
     risk_frame = pd.DataFrame(records)
     out = out.drop(columns=[c for c in risk_frame.columns if c != "name" and c in out.columns], errors="ignore")
     out = out.merge(risk_frame, on="name", how="left")
-    out["sleeper_current_injury_risk"] = pd.to_numeric(out.get("injury_risk"), errors="coerce").fillna(0.0)
-    out["injury_risk"] = pd.to_numeric(out["risk_score"], errors="coerce").fillna(out["sleeper_current_injury_risk"])
+    existing_series = pd.to_numeric(out.get("injury_risk"), errors="coerce").fillna(0.0)
+    out["sleeper_current_injury_risk"] = existing_series
+    out["injury_risk"] = pd.to_numeric(out["risk_score"], errors="coerce").fillna(existing_series)
 
     status["manual_risk_overrides"] = {"ok": True, "matched": int(override_hits)}
     status["model"] = {
