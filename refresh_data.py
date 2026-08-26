@@ -26,10 +26,11 @@ def _print_status_block(title: str, statuses: dict):
 
 def main():
     cfg = load_config()
-    print("PatBot v0.4.4 — refreshing projections, market data, risk, championship-strategy and owner-history inputs...")
+    print("PatBot v0.4.5 — refreshing projections, market data, risk, championship-strategy, owner-history and roster-strategy inputs...")
     print(
         "This checks public feeds, the Premium FantasyPros market/injury/news/history feeds, "
-        "the promoted high-confidence league-history tendencies, and any local private Athletic workbook."
+        "the promoted high-confidence league-history tendencies, PatBot's value-aware roster policy, "
+        "and any local private Athletic workbook."
     )
     try:
         csv_path, meta_path, meta = refresh_snapshot(cfg)
