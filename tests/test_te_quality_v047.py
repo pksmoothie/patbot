@@ -19,6 +19,7 @@ BASE_STRATEGY = {
         "elite_te1_top_n": 1,
         "solid_te1_top_n": 2,
         "elite_required_score_edge_over_best_rbwr": 7.5,
+        "elite_required_projected_points_edge_over_current_flex": 10.0,
         "solid_required_score_edge_over_best_rbwr": 3.0,
         "weak_te1_unrestricted": True,
     },
@@ -50,7 +51,7 @@ def test_elite_te1_blocks_normal_te2_value():
     assert gated[4] == 75.0
 
 
-def test_elite_te1_allows_only_wide_flex_edge():
+def test_elite_te1_allows_only_wide_available_flex_edge():
     score = np.array([0.0, 84.0, 78.0, 76.0, 75.0, 74.0, 70.0, -1e9, -1e9])
     gated = apply_te2_quality_gate_array(
         score,
@@ -60,6 +61,45 @@ def test_elite_te1_allows_only_wide_flex_edge():
         strategy=BASE_STRATEGY,
     )
     assert gated[1] == 84.0
+
+
+def test_elite_te1_te2_must_also_beat_current_roster_flex():
+    positions = np.array(["TE", "TE", "RB", "RB", "RB", "WR", "WR", "WR", "QB"])
+    vorp = np.array([100.0, 90.0, 70.0, 65.0, 60.0, 68.0, 64.0, 62.0, 55.0])
+    projections = np.array([250.0, 220.0, 240.0, 230.0, 205.0, 245.0, 235.0, 225.0, 400.0])
+    score = np.array([-1e9, 90.0, -1e9, -1e9, 78.0, -1e9, -1e9, 77.0, -1e9])
+    roster_cfg = {
+        "QB": 1,
+        "RB": 2,
+        "WR": 3,
+        "TE": 1,
+        "FLEX": 1,
+        "flex_eligible": ["RB", "WR", "TE"],
+    }
+    # Own elite TE0 plus RB2/RB3/RB4 and WR5/WR6/WR7. RB4 (205) is the current
+    # excess FLEX after reserving two RB starters; TE2 at 220 clears the +10 rule.
+    gated = apply_te2_quality_gate_array(
+        score,
+        positions=positions,
+        vorp=vorp,
+        roster_indices=[0, 2, 3, 4, 5, 6, 7, 8],
+        strategy=BASE_STRATEGY,
+        projections=projections,
+        roster_cfg=roster_cfg,
+    )
+    assert gated[1] == 90.0
+
+    projections[1] = 212.0
+    gated = apply_te2_quality_gate_array(
+        score,
+        positions=positions,
+        vorp=vorp,
+        roster_indices=[0, 2, 3, 4, 5, 6, 7, 8],
+        strategy=BASE_STRATEGY,
+        projections=projections,
+        roster_cfg=roster_cfg,
+    )
+    assert gated[1] < -1e8
 
 
 def test_solid_te1_requires_clear_but_smaller_edge():
