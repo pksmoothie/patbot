@@ -4,6 +4,12 @@ from collections import defaultdict
 import pandas as pd
 
 
+# Local app context for strategy layers that need player identity (not just
+# position counts). The Streamlit draft room calls roster_ids_for_slot directly
+# before building the recommendation board.
+_LAST_ROSTER_IDS: list[str] = []
+
+
 def round_for_pick(overall_pick: int, teams: int) -> int:
     return ((int(overall_pick) - 1) // int(teams)) + 1
 
@@ -28,12 +34,19 @@ def drafted_ids_from_history(history: list[dict]) -> set[str]:
 
 
 def roster_ids_for_slot(history: list[dict], slot: int) -> list[str]:
-    return [
+    global _LAST_ROSTER_IDS
+    result = [
         str(p["player_id"])
         for p in history
         if int(p.get("owner_slot", -1)) == int(slot)
         and p.get("player_id") is not None
     ]
+    _LAST_ROSTER_IDS = list(result)
+    return result
+
+
+def last_roster_ids() -> list[str]:
+    return list(_LAST_ROSTER_IDS)
 
 
 def make_pick_record(
