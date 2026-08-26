@@ -1,0 +1,24 @@
+# PatBot's own roster-construction policy. This is intentionally separate from
+# opponent behavior: these are hard/soft rules for our team only.
+#
+# Philosophy: do not draft by a rigid "fill starters first" sequence. If an
+# RB/WR is the better value, PatBot may build bench depth before QB1/TE1/FLEX is
+# complete. Hard constraints only protect scarce bench slots from low-optionality
+# duplication.
+
+value_aware: true
+allow_bench_before_starters_complete: true
+
+# One-QB league: once QB1 is drafted, every other QB leaves PatBot's board.
+max_qb_drafted: 1
+
+# TE2 can still be an exceptional-value pick while the offensive starting unit
+# is incomplete. Once QB/RB/WR/TE/FLEX are all covered, no more TE/QB bench
+# picks: remaining offensive selections are RB/WR upside swings.
+allow_te2_before_offense_complete: true
+post_offense_complete_positions: [RB, WR]
+
+# Offensive completion means QB1, RB2, WR3, TE1 and one FLEX-eligible excess
+# player are all rostered. K and D/ST are deliberately excluded; their separate
+# Round 14 / Round 15 strategy remains in league.yaml.
+completion_positions: [QB, RB, WR, TE, FLEX]
