@@ -27,11 +27,15 @@ te2_quality_strategy:
   elite_te1_top_n: 3
   solid_te1_top_n: 8
 
-  # A TE2 behind an elite TE1 is a luxury FLEX pick. It must beat the best
-  # currently available RB/WR by a wide PatBot-score margin to remain legal.
+  # Behind an elite TE1, TE2 is a luxury FLEX pick. It must beat the best
+  # currently available RB/WR by a wide PatBot-score margin AND, if we already
+  # have a FLEX-quality excess RB/WR/TE on the roster, project materially above
+  # that current FLEX option too.
   elite_required_score_edge_over_best_rbwr: 7.5
+  elite_required_projected_points_edge_over_current_flex: 10.0
 
-  # Behind a solid TE1, TE2 still needs a clear advantage over RB/WR.
+  # Behind a solid TE1, TE2 still needs a clear advantage over the best available
+  # RB/WR, but we do not impose the extra current-FLEX projection hurdle.
   solid_required_score_edge_over_best_rbwr: 3.0
 
   # Behind a weak TE1, leave TE2 normally available so PatBot can take a real
