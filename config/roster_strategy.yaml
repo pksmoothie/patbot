@@ -3,19 +3,43 @@
 #
 # Philosophy: do not draft by a rigid "fill starters first" sequence. If an
 # RB/WR is the better value, PatBot may build bench depth before QB1/TE1/FLEX is
-# complete. Hard constraints only protect scarce bench slots from low-optionality
+# complete. Hard constraints protect scarce bench slots from low-optionality
 # duplication.
 
 value_aware: true
 allow_bench_before_starters_complete: true
 
-# One-QB league: once QB1 is drafted, every other QB leaves PatBot's board.
+# One-QB league: once QB1 is drafted, every other QB leaves PatBot's draft board.
+# This is intentionally NOT quality-aware: even a merely adequate QB1 keeps QB2
+# blocked because a second QB cannot occupy FLEX in this format.
 max_qb_drafted: 1
 
-# TE2 can still be an exceptional-value pick while the offensive starting unit
-# is incomplete. Once QB/RB/WR/TE/FLEX are all covered, no more TE/QB bench
-# picks: remaining offensive selections are RB/WR upside swings.
+# TE is different because a second TE can theoretically become the starter or a
+# FLEX. TE2 therefore remains possible before the offense is complete, but the
+# hurdle depends on the quality of TE1.
+max_te_drafted: 2
 allow_te2_before_offense_complete: true
+te2_quality_strategy:
+  enabled: true
+
+  # TE1 quality is derived from PatBot TE VORP, not hard-coded player names.
+  # Top 3 = elite; next five = solid; everyone else = weak/replaceable.
+  elite_te1_top_n: 3
+  solid_te1_top_n: 8
+
+  # A TE2 behind an elite TE1 is a luxury FLEX pick. It must beat the best
+  # currently available RB/WR by a wide PatBot-score margin to remain legal.
+  elite_required_score_edge_over_best_rbwr: 7.5
+
+  # Behind a solid TE1, TE2 still needs a clear advantage over RB/WR.
+  solid_required_score_edge_over_best_rbwr: 3.0
+
+  # Behind a weak TE1, leave TE2 normally available so PatBot can take a real
+  # second swing at the position. No extra RB/WR comparison gate is imposed.
+  weak_te1_unrestricted: true
+
+# Once QB/RB/WR/TE/FLEX are all covered, no more TE/QB bench picks: remaining
+# offensive selections are RB/WR upside swings.
 post_offense_complete_positions: [RB, WR]
 
 # Offensive completion means QB1, RB2, WR3, TE1 and one FLEX-eligible excess
