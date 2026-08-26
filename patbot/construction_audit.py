@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from .draft import snake_pick
-from .roster_strategy import offensive_starters_complete
+from .roster_strategy import offensive_starters_complete, te1_quality_bucket
 from .sim import FastDraftSimulator
 
 
@@ -68,14 +68,7 @@ def starter_first_allowed_positions(
     sim: FastDraftSimulator,
     roster_counts: np.ndarray,
 ) -> set[str] | None:
-    """Positions allowed by the intentionally rigid starter-first counterfactual.
-
-    This is not PatBot's strategy. It exists only as a benchmark. If any base
-    offensive starter is missing, the benchmark must fill one of those positions.
-    Once the base QB/RB/WR/TE minima are filled but FLEX is not, it must fill FLEX
-    from an eligible position. After the offense is complete it stops constraining
-    PatBot beyond the normal value-aware rules already in the score vector.
-    """
+    """Positions allowed by the intentionally rigid starter-first counterfactual."""
     missing = missing_base_starters(sim, roster_counts)
     if missing:
         return set(missing)
@@ -112,6 +105,19 @@ def classify_pick(
             return "RB/WR bench after complete"
         return "RB/WR bench before complete"
     return pos
+
+
+def _te1_context(sim: FastDraftSimulator, mine: list[int]) -> tuple[str, str]:
+    te_idxs = [int(i) for i in mine if str(sim.pos[int(i)]).upper() == "TE"]
+    if not te_idxs:
+        return "none", "—"
+    best = max(te_idxs, key=lambda i: float(sim.vorp[i]))
+    quality = te1_quality_bucket(
+        positions=sim.pos,
+        vorp=sim.vorp,
+        roster_indices=mine,
+    ) or "none"
+    return str(quality), str(sim.names[best])
 
 
 def _starter_first_score_vector(
@@ -253,6 +259,7 @@ def _run_branch(
 
     checkpoint_rows: list[dict] = []
     deferral_rows: list[dict] = []
+    te2_rows: list[dict] = []
 
     for pick in range(int(start_pick), int(last_pick) + 1):
         if not available.any():
@@ -261,6 +268,7 @@ def _run_branch(
         if pick in sim.my_picks:
             round_no = (pick - 1) // sim.teams + 1
             pre = roster_state(sim, my_counts)
+            te1_quality, te1_name = _te1_context(sim, mine)
             immediate_scores = sim._patbot_score_vector(available, my_counts, pick)
 
             if policy == "starter_first":
@@ -306,6 +314,20 @@ def _run_branch(
                     }
                 )
 
+            if capture and role == "TE2":
+                rbwr_mask = available & np.isin(sim.pos, ["RB", "WR"]) & (immediate_scores > NEG_INF / 2)
+                best_rbwr_score = float(np.max(immediate_scores[rbwr_mask])) if rbwr_mask.any() else np.nan
+                edge = float(immediate_scores[idx]) - best_rbwr_score if np.isfinite(best_rbwr_score) else np.nan
+                te2_rows.append(
+                    {
+                        "Round": round_no,
+                        "TE1 Quality": te1_quality,
+                        "TE1": te1_name,
+                        "TE2": str(sim.names[idx]),
+                        "TE2 Score Edge vs Best RB/WR": edge,
+                    }
+                )
+
             available[idx] = False
             mine.append(idx)
             code = sim.pos_code[idx]
@@ -321,6 +343,7 @@ def _run_branch(
                         "Player": str(sim.names[idx]),
                         "Pos": pos,
                         "Role": role,
+                        "TE1 Quality Before": te1_quality,
                         "QB1 Filled Before": pre["qb1_filled"],
                         "RB2 Filled Before": pre["rb2_filled"],
                         "WR3 Filled Before": pre["wr3_filled"],
@@ -346,7 +369,7 @@ def _run_branch(
                 custom_noise_base,
             )
 
-    return mine, my_counts, checkpoint_rows, deferral_rows
+    return mine, my_counts, checkpoint_rows, deferral_rows, te2_rows
 
 
 def _pct(series: pd.Series) -> float:
@@ -364,6 +387,7 @@ def _summarize_checkpoints(records: pd.DataFrame, runs: int) -> pd.DataFrame:
         top = group["Player"].value_counts()
         top_name = str(top.index[0]) if len(top) else "—"
         top_pct = round(100.0 * float(top.iloc[0]) / max(int(runs), 1), 1) if len(top) else 0.0
+        te2_group = group[group["Role"].eq("TE2")]
         rows.append(
             {
                 "Round": int(round_no),
@@ -379,6 +403,9 @@ def _summarize_checkpoints(records: pd.DataFrame, runs: int) -> pd.DataFrame:
                 "QB1 Pick %": round(100.0 * roles.get("QB1", 0) / max(int(runs), 1), 1),
                 "TE1 Pick %": round(100.0 * roles.get("TE1", 0) / max(int(runs), 1), 1),
                 "TE2 Pick %": round(100.0 * roles.get("TE2", 0) / max(int(runs), 1), 1),
+                "Elite-TE1 TE2 Pick %": round(100.0 * float(te2_group["TE1 Quality Before"].eq("elite").sum()) / max(int(runs), 1), 1),
+                "Solid-TE1 TE2 Pick %": round(100.0 * float(te2_group["TE1 Quality Before"].eq("solid").sum()) / max(int(runs), 1), 1),
+                "Weak-TE1 TE2 Pick %": round(100.0 * float(te2_group["TE1 Quality Before"].eq("weak").sum()) / max(int(runs), 1), 1),
                 "RB/WR Pick %": round(100.0 * (positions.get("RB", 0) + positions.get("WR", 0)) / max(int(runs), 1), 1),
                 "RB/WR Bench Before Complete %": round(100.0 * roles.get("RB/WR bench before complete", 0) / max(int(runs), 1), 1),
                 "RB/WR Bench After Complete %": round(100.0 * roles.get("RB/WR bench after complete", 0) / max(int(runs), 1), 1),
@@ -422,6 +449,50 @@ def _summarize_deferrals(
     ).reset_index(drop=True)
 
 
+def _summarize_te2(te2_events: pd.DataFrame, runs: int) -> tuple[list[dict], list[dict]]:
+    if te2_events.empty:
+        return [], []
+
+    quality_rows = []
+    for quality in ("elite", "solid", "weak", "none"):
+        group = te2_events[te2_events["TE1 Quality"].eq(quality)]
+        if group.empty:
+            continue
+        quality_rows.append(
+            {
+                "TE1 Quality": quality,
+                "TE2 Picks": int(len(group)),
+                "Draft %": round(100.0 * len(group) / max(int(runs), 1), 1),
+                "Avg TE2 Score Edge vs Best RB/WR": round(float(group["TE2 Score Edge vs Best RB/WR"].mean()), 2),
+            }
+        )
+
+    grouped = (
+        te2_events.groupby(["Round", "TE1 Quality", "TE1", "TE2"], dropna=False)
+        .agg(
+            Times=("TE2", "size"),
+            Avg_Edge=("TE2 Score Edge vs Best RB/WR", "mean"),
+        )
+        .reset_index()
+        .sort_values(["Times", "Round"], ascending=[False, True])
+        .head(20)
+    )
+    event_rows = []
+    for _, row in grouped.iterrows():
+        event_rows.append(
+            {
+                "Round": int(row["Round"]),
+                "TE1 Quality": str(row["TE1 Quality"]),
+                "TE1": str(row["TE1"]),
+                "TE2": str(row["TE2"]),
+                "Times": int(row["Times"]),
+                "Draft %": round(100.0 * int(row["Times"]) / max(int(runs), 1), 1),
+                "Avg Score Edge vs Best RB/WR": round(float(row["Avg_Edge"]), 2),
+            }
+        )
+    return quality_rows, event_rows
+
+
 def run_construction_audit(
     engine,
     draft_history: list[dict],
@@ -431,14 +502,7 @@ def run_construction_audit(
     seed: int | None = None,
     progress: Callable[[int, int], None] | None = None,
 ):
-    """Audit PatBot's value-aware roster construction against rigid starter-first.
-
-    The actual branch uses FastDraftSimulator._lookahead_pick, so Rounds 2 and 3
-    follow the exact same lookahead path as the production candidate simulator.
-    The counterfactual uses the same room inputs but forces missing offensive
-    starters (and then FLEX) before allowing bench depth. Both branches are
-    evaluated on the same sampled performance/availability outcome in each run.
-    """
+    """Audit PatBot's value-aware roster construction against rigid starter-first."""
     target_rounds = tuple(sorted({int(r) for r in rounds if 2 <= int(r) <= 13}))
     if not target_rounds:
         raise ValueError("Construction audit needs at least one target round from 2 through 13.")
@@ -453,6 +517,7 @@ def run_construction_audit(
 
     all_checkpoints: list[dict] = []
     all_deferrals: list[dict] = []
+    all_te2_events: list[dict] = []
     actual_scores = np.empty(int(runs), dtype=float)
     forced_scores = np.empty(int(runs), dtype=float)
     actual_vorp = np.empty(int(runs), dtype=float)
@@ -470,7 +535,7 @@ def run_construction_audit(
             np.maximum(3.0, sim.custom_rank * 0.06),
         )
 
-        actual_mine, actual_counts, checkpoints, deferrals = _run_branch(
+        actual_mine, actual_counts, checkpoints, deferrals, te2_events = _run_branch(
             sim,
             draft_history,
             start_pick=start_pick,
@@ -482,7 +547,7 @@ def run_construction_audit(
             target_rounds=set(target_rounds),
             capture=True,
         )
-        forced_mine, forced_counts, _, _ = _run_branch(
+        forced_mine, forced_counts, _, _, _ = _run_branch(
             sim,
             draft_history,
             start_pick=start_pick,
@@ -513,14 +578,19 @@ def run_construction_audit(
         for row in deferrals:
             row["Run"] = run
             all_deferrals.append(row)
+        for row in te2_events:
+            row["Run"] = run
+            all_te2_events.append(row)
 
         if progress is not None and ((run + 1) == int(runs) or (run + 1) % max(1, int(runs) // 10) == 0):
             progress(run + 1, int(runs))
 
     checkpoint_df = pd.DataFrame(all_checkpoints)
     deferral_df = pd.DataFrame(all_deferrals)
+    te2_df = pd.DataFrame(all_te2_events)
     summary = _summarize_checkpoints(checkpoint_df, int(runs))
     deferrals = _summarize_deferrals(deferral_df, run_deltas, int(runs))
+    te2_quality_summary, te2_top_events = _summarize_te2(te2_df, int(runs))
 
     diff = actual_scores - forced_scores
     comparison = pd.DataFrame(
@@ -539,6 +609,7 @@ def run_construction_audit(
                 "Actual Offense Complete by R13 %": round(100.0 * float(np.mean(actual_complete)), 1),
                 "Starter-First Offense Complete by R13 %": round(100.0 * float(np.mean(forced_complete)), 1),
                 "Avg Bench-Before-Complete Deferrals": round(len(deferral_df) / max(int(runs), 1), 2),
+                "Avg TE2 Picks per Draft": round(len(te2_df) / max(int(runs), 1), 3),
                 "Runs": int(runs),
             }
         ]
@@ -552,5 +623,7 @@ def run_construction_audit(
         "last_pick": int(last_pick),
         "lookahead_enabled": bool(sim.lookahead_enabled),
         "lookahead_rounds": sorted(int(x) for x in sim.lookahead_rounds),
+        "te2_quality_summary": te2_quality_summary,
+        "te2_top_events": te2_top_events,
     }
     return summary, deferrals, comparison, meta
