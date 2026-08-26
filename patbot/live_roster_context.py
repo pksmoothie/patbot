@@ -47,7 +47,8 @@ def install_live_roster_context_patch() -> None:
             if pid in id_to_pos
         )
 
-        if cached_ids and len(cached_positions.elements()) == len(cached_ids) and cached_positions == supplied_positions:
+        cached_fully_resolved = sum(cached_positions.values()) == len(cached_ids)
+        if cached_ids and cached_fully_resolved and cached_positions == supplied_positions:
             self._patbot_roster_ids = cached_ids
         else:
             self._patbot_roster_ids = []
