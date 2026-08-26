@@ -29,6 +29,7 @@ def load_roster_strategy() -> dict:
                 "elite_te1_top_n": 3,
                 "solid_te1_top_n": 8,
                 "elite_required_score_edge_over_best_rbwr": 7.5,
+                "elite_required_projected_points_edge_over_current_flex": 10.0,
                 "solid_required_score_edge_over_best_rbwr": 3.0,
                 "weak_te1_unrestricted": True,
             },
@@ -194,6 +195,31 @@ def te1_quality_bucket(
     return "weak"
 
 
+def current_flex_projection_benchmark(
+    *,
+    positions: np.ndarray,
+    projections: np.ndarray,
+    roster_indices: list[int] | set[int] | tuple[int, ...],
+    roster_cfg: dict,
+) -> float | None:
+    """Best currently rostered FLEX option after reserving base starters."""
+    positions_arr = np.asarray(positions).astype(str)
+    proj = np.asarray(projections, dtype=float)
+    owned = {int(i) for i in roster_indices if 0 <= int(i) < len(positions_arr)}
+    eligible = [str(p).upper() for p in roster_cfg.get("flex_eligible", ["RB", "WR", "TE"])]
+
+    excess: list[int] = []
+    for pos in eligible:
+        idxs = [i for i in owned if positions_arr[i] == pos]
+        idxs.sort(key=lambda i: float(proj[i]), reverse=True)
+        base_need = int(roster_cfg.get(pos, 0))
+        excess.extend(idxs[base_need:])
+
+    if not excess:
+        return None
+    return max(float(proj[i]) for i in excess)
+
+
 def apply_te2_quality_gate_array(
     score: np.ndarray,
     *,
@@ -201,8 +227,15 @@ def apply_te2_quality_gate_array(
     vorp: np.ndarray,
     roster_indices: list[int] | set[int] | tuple[int, ...],
     strategy: dict | None = None,
+    projections: np.ndarray | None = None,
+    roster_cfg: dict | None = None,
 ) -> np.ndarray:
-    """Gate TE2 based on TE1 quality and the best available RB/WR alternative."""
+    """Gate TE2 based on TE1 quality and FLEX opportunity cost.
+
+    Behind an elite TE1, TE2 must clear two hurdles when applicable: a wide
+    PatBot-score edge over every currently available RB/WR and a material raw
+    projection edge over the best FLEX option already on our roster.
+    """
     out = np.asarray(score, dtype=float).copy()
     cfg = strategy or load_roster_strategy()
     te_cfg = cfg.get("te2_quality_strategy", {}) or {}
@@ -237,8 +270,22 @@ def apply_te2_quality_gate_array(
         required = float(te_cfg.get("elite_required_score_edge_over_best_rbwr", 7.5))
     else:
         required = float(te_cfg.get("solid_required_score_edge_over_best_rbwr", 3.0))
-
     out[te_mask & (out < best_rbwr + required)] = _NEG_INF
+
+    if quality == "elite" and projections is not None and roster_cfg is not None:
+        flex_benchmark = current_flex_projection_benchmark(
+            positions=positions_arr,
+            projections=np.asarray(projections, dtype=float),
+            roster_indices=owned,
+            roster_cfg=roster_cfg,
+        )
+        if flex_benchmark is not None:
+            projection_edge = float(
+                te_cfg.get("elite_required_projected_points_edge_over_current_flex", 10.0)
+            )
+            proj = np.asarray(projections, dtype=float)
+            out[te_mask & (proj < flex_benchmark + projection_edge)] = _NEG_INF
+
     return out
 
 
@@ -348,6 +395,8 @@ def install_roster_strategy_patch() -> None:
                 positions=positions,
                 vorp=vorp,
                 roster_indices=roster_indices,
+                projections=proj,
+                roster_cfg=self.roster_cfg,
             )
             legal_ids = {
                 str(self.players.iloc[i]["player_id"])
@@ -426,6 +475,8 @@ def install_roster_strategy_patch() -> None:
             positions=self.pos,
             vorp=self.vorp,
             roster_indices=set(getattr(self, "_patbot_owned_idxs", set())),
+            projections=self.proj,
+            roster_cfg=self.engine.roster_cfg,
         )
         return np.where(available, score, _NEG_INF)
 
