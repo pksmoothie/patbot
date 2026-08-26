@@ -31,10 +31,11 @@ def main():
         make_pick_record(3, teams, str(chase["player_id"]), chase["name"], chase["team"], chase["pos"]),
     ]
 
-    print("\nPatBot v0.4.6 value-aware roster construction audit")
+    print("\nPatBot v0.4.7 value-aware roster construction audit")
     print("Anchor: Gibbs 1.01, Bijan 1.02, Ja'Marr Chase 1.03")
     print("Auditing Rounds 8, 10, 12 and 13 with the production R2/R3 lookahead path.")
     print("Counterfactual: same simulated room, but PatBot must fill missing offensive starters before bench depth.")
+    print("TE2 policy: quality-aware; elite TE1 requires a wide edge over the best available RB/WR.")
     print("500 paired rooms. Progress will print below.\n")
 
     def progress(done: int, total: int):
@@ -60,6 +61,17 @@ def main():
     else:
         print(deferrals.head(30).to_string(index=False))
 
+    print("\n=== TE2 QUALITY CHECK ===\n")
+    quality_rows = meta.get("te2_quality_summary", [])
+    event_rows = meta.get("te2_top_events", [])
+    if not quality_rows:
+        print("No TE2 selections occurred in the 500 rooms.")
+    else:
+        print(pd.DataFrame(quality_rows).to_string(index=False))
+        if event_rows:
+            print("\nMost common TE2 exceptions:\n")
+            print(pd.DataFrame(event_rows).to_string(index=False))
+
     qb2 = float(pd.to_numeric(summary.get("QB2 Pick %", 0), errors="coerce").fillna(0).max()) if not summary.empty else 0.0
     invalid = float(pd.to_numeric(summary.get("Post-Complete Invalid %", 0), errors="coerce").fillna(0).max()) if not summary.empty else 0.0
 
@@ -76,7 +88,8 @@ def main():
 
     print("\nHow to read the policy comparison:")
     print("- Positive Value-Aware Delta means allowing bench value before starter completion produced the better eventual R13 roster on the same sampled football outcome.")
-    print("- 'Immediate Score Edge' compares the chosen bench RB/WR with the best still-missing base starter on that exact board. Negative values can still be rational when R2/R3 lookahead sees a better two-pick path.")
+    print("- 'Immediate Score Edge' compares the chosen bench RB/WR with the best still-missing base starter on that exact board.")
+    print("- Elite-TE1 TE2 picks should be rare and must clear the configured wide score edge over every available RB/WR.")
     print("- The starter-first branch is intentionally rigid and exists only as a benchmark, not as a proposed strategy.\n")
 
 
