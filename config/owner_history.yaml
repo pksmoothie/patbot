@@ -1,0 +1,71 @@
+# Historical owner tendencies promoted into PatBot only when the league history
+# showed a very strong, repeated drafting pattern. These are probabilistic
+# nudges, not hard rules; weaker/interesting trends stay out of the simulator.
+#
+# Scoring convention in the opponent simulator: lower rank-score is preferred.
+# A positive "bonus" subtracts rank points from that position; a positive
+# "penalty" adds rank points.
+
+owners:
+  Vinnie:
+    confidence: high
+    evidence:
+      - "First QB by Round 5 in 19 of 20 seasons."
+      - "Round 1 RB in 16 of 20 drafts."
+    round1_position_bonus:
+      RB: 10.0
+    first_qb_bonus:
+      from_round: 2
+      through_round: 5
+      bonus: 14.0
+
+  Dave:
+    confidence: high
+    evidence:
+      - "First QB by Round 5 in 8 of 10 seasons."
+      - "QB in Round 3 in each of 2023, 2024 and 2025."
+    first_qb_bonus:
+      from_round: 3
+      through_round: 5
+      bonus: 12.0
+
+  Paul:
+    confidence: high
+    evidence:
+      - "Round 1 RB in 14 of 20 drafts."
+      - "Recent first-QB rounds: 13, 5, 11, 7, 14."
+    round1_position_bonus:
+      RB: 10.0
+    first_qb_penalty_before_round:
+      round: 7
+      penalty: 10.0
+
+  Potter:
+    confidence: high
+    evidence:
+      - "Last five first-QB rounds: 7, 8, 13, 10, 13."
+    first_qb_penalty_before_round:
+      round: 7
+      penalty: 14.0
+
+  Mateo:
+    confidence: high
+    evidence:
+      - "24 of 25 selections in Rounds 1-5 over the last five drafts were RB/WR."
+      - "No QB in the first five rounds in any of those five drafts."
+    early_position_bonus:
+      through_round: 5
+      positions: [RB, WR]
+      bonus: 9.0
+    first_qb_penalty_before_round:
+      round: 6
+      penalty: 14.0
+
+  James:
+    confidence: high
+    evidence:
+      - "Drafted at least two QBs in 9 of 10 seasons."
+      - "Drafted multiple QBs in 4 of the last 5 seasons."
+    second_qb_bonus:
+      from_round: 8
+      bonus: 10.0
