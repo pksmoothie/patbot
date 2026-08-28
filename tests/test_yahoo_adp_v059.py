@@ -1,6 +1,11 @@
 import pandas as pd
 
-from patbot.yahoo_adp import behavioral_adp, manager_yahoo_weight, parse_yahoo_adp_tables
+from patbot.yahoo_adp import (
+    _request_params,
+    behavioral_adp,
+    manager_yahoo_weight,
+    parse_yahoo_adp_tables,
+)
 
 
 def test_parse_yahoo_basic_all_drafts_table():
@@ -43,6 +48,13 @@ def test_parser_prefers_basic_all_drafts_over_plus():
     )
     out = parse_yahoo_adp_tables([table], ["Player A", "Player B"])
     assert out.set_index("name").loc["Player A", "yahoo_adp"] == 20.0
+
+
+def test_snake_adp_request_uses_sd_not_auction_ad_tab():
+    params = _request_params(pos="ALL", count=50)
+    assert params["tab"] == "SD"
+    assert params["sort"] == "DA_AP"
+    assert params["count"] == 50
 
 
 def test_behavioral_adp_is_manager_weighted_and_falls_back():
