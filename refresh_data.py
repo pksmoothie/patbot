@@ -26,7 +26,7 @@ def _print_status_block(title: str, statuses: dict):
 
 def main():
     cfg = load_config()
-    print("PatBot v0.4.8 — refreshing projections, market data, risk, championship-strategy, owner-history and quality-aware roster-strategy inputs...")
+    print("PatBot v0.4.9 — refreshing projections, market data, risk, championship-strategy, owner-history and quality-aware roster-strategy inputs...")
     print(
         "This checks public feeds, the Premium FantasyPros market/injury/news/history feeds, "
         "the promoted high-confidence league-history tendencies, PatBot's value-aware roster policy, "
