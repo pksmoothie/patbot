@@ -41,11 +41,18 @@ def test_history_components_defaults_are_safe():
     assert age == 0.0
 
 
-def test_uncorroborated_questionable_is_soft_on_draft_day():
+def test_uncorroborated_questionable_is_ignored_on_draft_day():
     status, probability, source = _draft_day_status_probability(None, "Questionable")
     assert status == "Questionable"
-    assert probability == 0.95
-    assert source == "sleeper_soft"
+    assert probability == 1.0
+    assert source == "sleeper_ignored"
+
+
+def test_uncorroborated_probable_is_ignored_on_draft_day():
+    status, probability, source = _draft_day_status_probability(None, "Probable")
+    assert status == "Probable"
+    assert probability == 1.0
+    assert source == "sleeper_ignored"
 
 
 def test_hard_sleeper_status_still_matters_without_fantasypros():
