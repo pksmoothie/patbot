@@ -21,6 +21,13 @@ def _print_status_block(title: str, statuses: dict):
             matched = status.get("matched")
             matched_text = f": {matched} players matched" if matched is not None else ""
             print(f"  OK   {source}{matched_text}{extra}")
+            if status.get("coverage_pct") is not None:
+                print(f"       coverage: {status['coverage_pct']}%")
+            if status.get("sleeper_weight") is not None:
+                print(
+                    f"       blend weights: Sleeper {status['sleeper_weight']:.0%} / "
+                    f"FantasyPros {status.get('fantasypros_weight', 0):.0%}"
+                )
             if status.get("warning"):
                 print(f"       warning: {status['warning']}")
             if status.get("note"):
@@ -30,11 +37,12 @@ def _print_status_block(title: str, statuses: dict):
 
 
 def _attach_projection_sources(csv_path, meta_path, meta, cfg):
-    """Attach diagnostic full-stat projection sources after the core refresh.
+    """Attach FantasyPros full-stat projections and build production blend.
 
-    v0.5.0 deliberately does not change production projection weights. The new
-    FantasyPros stat line is stored in the local snapshot so source-ablation
-    diagnostics can compare it with Sleeper and the private Athletic workbook.
+    v0.5.1 promotes the previously diagnostic FantasyPros stat projection into
+    PatBot's base projection at a conservative configured weight. Consensus is
+    then recomputed from the blended base projection. Athletic stays separate in
+    the consensus layer rather than being counted twice.
     """
     enabled = bool(cfg.get("projection_sources", {}).get("fantasypros_preseason", True))
     if not enabled:
@@ -47,15 +55,19 @@ def _attach_projection_sources(csv_path, meta_path, meta, cfg):
         return meta
 
     try:
+        from patbot.consensus import add_consensus_values
         from patbot.fantasypros_projection import augment_fantasypros_projections
+        from patbot.projection_blend import blend_projection_sources
 
         frame = pd.read_csv(csv_path)
-        frame, status = augment_fantasypros_projections(frame, cfg)
+        frame, fp_status = augment_fantasypros_projections(frame, cfg)
+        frame, blend_status = blend_projection_sources(frame, cfg)
+        frame = add_consensus_values(frame, cfg)
         frame.to_csv(csv_path, index=False)
-        meta["projection_sources"] = status
+        meta["projection_sources"] = {**fp_status, **blend_status}
     except Exception as exc:
         meta["projection_sources"] = {
-            "fantasypros_preseason_projections": {
+            "projection_pipeline": {
                 "ok": False,
                 "error": f"{type(exc).__name__}: {exc}",
             }
@@ -67,11 +79,12 @@ def _attach_projection_sources(csv_path, meta_path, meta, cfg):
 
 def main():
     cfg = load_config()
-    print("PatBot v0.5.0 — refreshing projections, market data, risk, championship-strategy, owner-history and quality-aware roster-strategy inputs...")
+    print("PatBot v0.5.1 — refreshing projections, market data, risk, championship-strategy, owner-history and quality-aware roster-strategy inputs...")
     print(
         "This checks Sleeper, FantasyPros ECR/ADP plus full preseason stat projections, "
-        "FantasyPros injury/news/history feeds, the promoted high-confidence league-history tendencies, "
-        "PatBot's value-aware roster policy, quality-aware TE2 rules, and any local private Athletic workbook."
+        "builds the configured production projection blend, checks FantasyPros injury/news/history feeds, "
+        "the promoted high-confidence league-history tendencies, PatBot's value-aware roster policy, "
+        "quality-aware TE2 rules, and any local private Athletic workbook."
     )
     try:
         csv_path, meta_path, meta = refresh_snapshot(cfg)
@@ -89,7 +102,7 @@ def main():
     print(f"Snapshot UTC:         {meta['snapshot_at_utc']}")
 
     _print_status_block("Independent market/ranking source status", meta.get("market_sources", {}))
-    _print_status_block("Independent projection source status", meta.get("projection_sources", {}))
+    _print_status_block("Projection source / production blend status", meta.get("projection_sources", {}))
     _print_status_block("Risk & availability source status", meta.get("risk_sources", {}))
 
     print("\nNext: run  .\\.venv\\Scripts\\python.exe -m streamlit run app.py")
