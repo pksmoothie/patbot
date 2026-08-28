@@ -56,9 +56,10 @@ def score_upside_evidence(
 
     The signal is deliberately separate from projections, VORP and market rank.
     Multiple articles from the same publisher count as one independent source;
-    the strongest item from that source wins. Production eligibility requires
-    corroboration across independent publishers. v0.5.6 is diagnostic only: the
-    computed LWS bonus is reported but is not yet applied by the draft engine.
+    the strongest item from that source wins. Eligibility requires corroboration
+    across independent publishers plus at least one objectively supported source.
+    Production timing is enforced separately so this evidence can only influence
+    PatBot in configured late rounds.
     """
     out = players.copy()
     scfg = config.get("championship_strategy", {}).get("expert_upside_intel", {})
@@ -74,6 +75,7 @@ def score_upside_evidence(
 
     half_life = max(1.0, float(scfg.get("recency_half_life_days", 21.0)))
     min_sources = max(1, int(scfg.get("minimum_independent_sources", 2)))
+    min_objective = max(0, int(scfg.get("minimum_objective_sources", 1)))
     max_bonus = max(0.0, float(scfg.get("max_lws_bonus", 8.0)))
 
     known = {normalize_name(str(name)): str(name) for name in out["name"].astype(str)}
@@ -144,15 +146,16 @@ def score_upside_evidence(
         records = sorted(source_bucket.values(), key=lambda x: float(x["item_score"]), reverse=True)
         scores = [float(x["item_score"]) for x in records]
         source_count = len(scores)
+        objective_count = sum(1 for x in records if x["objective_support"])
         mean_score = sum(scores) / source_count if source_count else 0.0
         corroboration = min(1.0, 0.55 + 0.20 * max(0, source_count - 1))
         intel_score = 100.0 * mean_score * corroboration
-        eligible = source_count >= min_sources
+        eligible = source_count >= min_sources and objective_count >= min_objective
         bonus = max_bonus * intel_score / 100.0 if eligible else 0.0
 
         score_map[name] = round(intel_score, 2)
         sources_map[name] = source_count
-        objective_map[name] = sum(1 for x in records if x["objective_support"])
+        objective_map[name] = objective_count
         eligible_map[name] = bool(eligible)
         bonus_map[name] = round(bonus, 3)
         labels = []
@@ -178,11 +181,12 @@ def score_upside_evidence(
         "matched_players": int((out["expert_upside_sources"] > 0).sum()),
         "eligible_players": int(out["expert_upside_eligible"].sum()),
         "minimum_independent_sources": min_sources,
+        "minimum_objective_sources": min_objective,
         "max_lws_bonus": max_bonus,
         "unmatched_players": sorted(set(unmatched)),
         "note": (
-            "Diagnostic only in v0.5.6. Expert upside intel is positive-only, publisher-deduplicated, "
-            "recency-weighted and requires independent corroboration before any future production bonus."
+            "Expert upside intel is positive-only, publisher-deduplicated, recency-weighted, "
+            "requires independent corroboration plus objective support, and is production-gated to late rounds."
         ),
     }
     return out, status
