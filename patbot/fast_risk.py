@@ -32,6 +32,18 @@ def _norm_id(value) -> str:
     return text
 
 
+def _clean_status(value) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    return "" if text.lower() in {"nan", "none", "null"} else text
+
+
 def _fetch_sleeper_current_status(players: pd.DataFrame) -> tuple[dict[str, dict], dict]:
     """Fetch the current Sleeper player metadata in one lightweight request."""
     try:
@@ -66,7 +78,7 @@ def _history_components(row: pd.Series) -> tuple[float, float, float]:
 
 
 def _is_serious_sleeper_status(status: str | None) -> bool:
-    text = str(status or "").strip().lower()
+    text = _clean_status(status).lower()
     return any(term in text for term in ("out", "ir", "pup", "nfi", "doubt"))
 
 
@@ -82,14 +94,15 @@ def _draft_day_status_probability(
     such as Questionable/Probable are informational only and add zero draft-day
     risk penalty.
     """
+    cleaned_sleeper = _clean_status(sleeper_status)
     if fantasypros_item:
-        status, probability = _status_probability(fantasypros_item, sleeper_status)
-        return status, probability, "fantasypros"
+        status, probability = _status_probability(fantasypros_item, cleaned_sleeper)
+        return _clean_status(status), probability, "fantasypros"
 
-    status = str(sleeper_status or "").strip()
+    status = cleaned_sleeper
     lower = status.lower()
     if not lower:
-        return status, 1.0, "none"
+        return "", 1.0, "none"
     if "out" in lower or "ir" in lower or "pup" in lower or "nfi" in lower:
         return status, 0.20, "sleeper_hard"
     if "doubt" in lower:
@@ -140,9 +153,9 @@ def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame
         sleeper_id = _norm_id(row.get("player_id"))
         fp_id = _norm_id(row.get("fp_player_id"))
         smeta = sleeper_status.get(sleeper_id, {})
-        sleeper_injury_status = smeta.get("injury_status")
-        if sleeper_injury_status is None:
-            sleeper_injury_status = row.get("injury_status")
+        sleeper_injury_status = _clean_status(smeta.get("injury_status"))
+        if not sleeper_injury_status:
+            sleeper_injury_status = _clean_status(row.get("injury_status"))
 
         injury_item = injuries.get(fp_id)
         current_status, play_prob, status_source = _draft_day_status_probability(
@@ -188,7 +201,7 @@ def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame
             + 0.15 * off_component
         )
         sleeper_risk = _injury_risk({"injury_status": sleeper_injury_status})
-        if status_source == "sleeper_ignored":
+        if status_source in {"none", "sleeper_ignored"}:
             sleeper_risk = 0.0
         risk_score = max(sleeper_risk, min(1.0, risk_score))
 
