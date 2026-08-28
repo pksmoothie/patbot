@@ -12,6 +12,7 @@ __pycache__/
 # Keep the tiny checked-in example data, but not local API refresh output.
 data/players_2026_live.csv
 data/players_2026_live.meta.json
+data/yahoo_adp_2026.csv
 
 # Paid/private local ranking sources
 private_sources/*.xlsx
