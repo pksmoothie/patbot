@@ -27,7 +27,7 @@ SCORING = {
 }
 
 
-def test_fantasypros_mapper_handles_plural_projection_fields():
+def test_fantasypros_mapper_handles_projection_field_names():
     raw = {
         "games": 17,
         "pass_cmp": 350,
@@ -36,14 +36,18 @@ def test_fantasypros_mapper_handles_plural_projection_fields():
         "pass_ints": 9,
         "rush_yds": 410,
         "rush_tds": 5,
-        "rec": 0,
-        "rec_yds": 0,
-        "rec_tds": 0,
+        "rec_rec": 72,
+        "rec_yds": 950,
+        "rec_tds": 7,
+        "fumbles": 2.5,
     }
     mapped = fantasypros_stats_to_patbot(raw)
     assert mapped["pass_yd"] == 4200
     assert mapped["pass_td"] == 31
     assert mapped["rush_yd"] == 410
+    assert mapped["rec"] == 72
+    assert mapped["rec_yd"] == 950
+    assert mapped["fum_lost"] == 2.5
     assert mapped["gp"] == 17
 
 
@@ -56,9 +60,9 @@ def test_fantasypros_two_point_aggregate_is_counted_once():
     assert scored["custom_points"] == 6.0
 
 
-def test_total_fumbles_are_not_treated_as_fumbles_lost():
-    mapped = fantasypros_stats_to_patbot({"fumbles": 8})
-    assert mapped["fum_lost"] == 0.0
+def test_explicit_fumbles_lost_takes_precedence_over_fumbles():
+    mapped = fantasypros_stats_to_patbot({"fumbles_lost": 1.5, "fumbles": 4.0})
+    assert mapped["fum_lost"] == 1.5
 
 
 def test_fantasypros_stats_payload_can_be_a_list():
