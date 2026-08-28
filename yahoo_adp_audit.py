@@ -25,14 +25,19 @@ def main():
     frame["existing_market_adp"] = pd.to_numeric(frame.get("adp"), errors="coerce")
     frame["Yahoo minus Existing"] = frame["yahoo_adp"] - frame["existing_market_adp"]
 
-    print("\nPatBot v0.5.9.1 Yahoo ADP / room-behavior audit")
+    print("\nPatBot v0.5.9.2 Yahoo ADP / room-behavior audit")
     print("DIAGNOSTIC ONLY: Yahoo ADP is not yet changing PatBot production picks.\n")
     print(
-        f"Yahoo rows matched: {status['matched']} | HTTP requests: {status['requests']} | "
-        f"cached locally: {CACHE_PATH}"
+        f"Yahoo rows matched: {status['matched']} | pages loaded: {status.get('pages_loaded', status['requests'])} | "
+        f"transport: {status.get('transport', 'requests')} | cached locally: {CACHE_PATH}"
     )
+    if status.get("browser_pages"):
+        print(
+            f"Yahoo served plain requests without the ADP table, so PatBot rendered "
+            f"{status['browser_pages']} page(s) headlessly with the installed Edge/Chrome browser."
+        )
     print("Source: Yahoo Draft Analysis -> snake/standard draft -> Avg Pick.")
-    print("Purpose: predict what this specific room is likely to do, especially casual managers; not to decide player quality.\n")
+    print("Purpose: help predict what this room is likely to do; Yahoo is a supporting behavioral signal, not player valuation and not the whole room model.\n")
 
     coverage = 100.0 * frame["yahoo_adp"].notna().mean()
     offense = frame[frame["pos"].isin(["QB", "RB", "WR", "TE"])]
@@ -93,8 +98,9 @@ def main():
 
     print("\nGuardrails for production integration:")
     print("- Yahoo ADP will never enter proj_points, VORP, expert rank, or Athletic/FantasyPros player-quality signals.")
-    print("- It will affect simulated opponent selection and therefore PatBot's estimate of whether a player survives to the next pick.")
-    print("- Casual managers will be much more Yahoo-board anchored than sharp managers.")
+    print("- It will be only one component of simulated opponent selection and survival estimates.")
+    print("- Existing market signals, manager profile, roster needs and randomness remain in the opponent model.")
+    print("- Casual managers receive more Yahoo influence than sharp managers, but Yahoo is not a majority input even for casuals.")
     print("- If Yahoo is unavailable or stale, behavior falls back to the existing market model rather than breaking the draft engine.\n")
 
 
