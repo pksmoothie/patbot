@@ -17,7 +17,7 @@ YAHOO_ADP_TAB = "SD"
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/126.0 Safari/537.36 PatBot/0.5.9.1"
+    "Chrome/126.0 Safari/537.36 PatBot/0.5.9"
 )
 
 
@@ -249,14 +249,20 @@ def fetch_yahoo_adp(
 
 
 def manager_yahoo_weight(archetype: str) -> float:
-    """Proposed Yahoo-board anchoring by manager sophistication."""
+    """Supporting Yahoo-board influence by manager sophistication.
+
+    Yahoo is deliberately not a majority behavioral input even for casuals. It
+    nudges the existing market/custom/roster-need/randomness model because the
+    Yahoo board is visible in the draft room, but it never becomes the room model
+    by itself.
+    """
     return {
-        "casual": 0.80,
-        "market": 0.55,
-        "league_aware": 0.30,
-        "sharp": 0.15,
-        "extremely_sharp": 0.05,
-    }.get(str(archetype), 0.40)
+        "casual": 0.35,
+        "market": 0.25,
+        "league_aware": 0.15,
+        "sharp": 0.07,
+        "extremely_sharp": 0.03,
+    }.get(str(archetype), 0.18)
 
 
 def behavioral_adp(existing_market_adp: pd.Series, yahoo_adp: pd.Series, yahoo_weight: float) -> pd.Series:
