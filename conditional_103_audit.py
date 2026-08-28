@@ -24,13 +24,13 @@ CANDIDATE_POOL = CORE_TOP + [
     "Jonathan Taylor",
 ]
 
-# All top-two combinations among the five most plausible names, plus a few
-# representative surprise boards where Amon-Ra is taken inside the top two.
-SCENARIOS = list(itertools.combinations(CORE_TOP, 2)) + [
-    ("Jahmyr Gibbs", "Amon-Ra St. Brown"),
-    ("Bijan Robinson", "Amon-Ra St. Brown"),
-    ("Jaxon Smith-Njigba", "Amon-Ra St. Brown"),
-]
+# Order matters because pick 1 belongs to Paul and pick 2 belongs to Faherty;
+# their roster state and manager tendencies affect later room behavior. Test both
+# orders for every pair among the five most plausible names, plus both orders for
+# a few representative surprise boards involving Amon-Ra.
+SCENARIOS = list(itertools.permutations(CORE_TOP, 2))
+for other in ("Jahmyr Gibbs", "Bijan Robinson", "Jaxon Smith-Njigba"):
+    SCENARIOS.extend(itertools.permutations((other, "Amon-Ra St. Brown"), 2))
 
 
 def _row_by_name(players: pd.DataFrame, name: str) -> pd.Series:
@@ -138,7 +138,8 @@ def main():
 
     print("\nPatBot v0.5.0 conditional 1.03 decision-tree audit")
     print("This answers what PatBot should do if Paul/Faherty do NOT take Gibbs/Bijan as modeled.")
-    print("300 paired runs per candidate per scenario; this is a screen, not the final 1,500-run lock for close cases.\n")
+    print(f"{len(SCENARIOS)} ordered top-two scenarios; 300 paired runs per candidate per scenario.")
+    print("This is a screen, not the final 1,500-run lock for close cases.\n")
 
     results = run_conditional_103(players, cfg, runs=300)
     summary = _scenario_summary(results)
@@ -156,9 +157,9 @@ def main():
     expected = results[
         ((results["Pick 1"] == "Jahmyr Gibbs") & (results["Pick 2"] == "Bijan Robinson"))
         | ((results["Pick 1"] == "Bijan Robinson") & (results["Pick 2"] == "Jahmyr Gibbs"))
-    ].sort_values("Scenario Rank")
+    ].sort_values(["Pick 1", "Scenario Rank"])
     if not expected.empty:
-        print("\n=== EXPECTED GIBBS + BIJAN ANCHOR ===\n")
+        print("\n=== GIBBS + BIJAN ORDER-SENSITIVITY ANCHOR ===\n")
         print(expected[cols].to_string(index=False))
 
     close = summary[summary["Close?"].eq("YES")]
@@ -169,9 +170,9 @@ def main():
         print(close.to_string(index=False))
 
     print("\nNotes:")
-    print("- Chase is not hard-coded here. The expected Gibbs/Bijan scenario should reproduce the current Chase preference if the model remains stable.")
-    print("- The identity of picks 1 and 2 is preserved because removing a specific player changes what can survive to later PatBot turns.")
-    print("- The extra Amon-Ra scenarios stand in for plausible surprise top-two behavior; no generic 'surprise player' is inserted into the model.")
+    print("- Chase is not hard-coded here. The expected Gibbs/Bijan branches should reproduce the current Chase preference if the model remains stable.")
+    print("- Pick order is explicitly modeled because Paul at 1.01 and Faherty at 1.02 have different tendencies and roster states.")
+    print("- The extra Amon-Ra branches provide concrete surprise-top-two cases; no generic 'surprise player' is inserted into the model.")
     print("- Any close or unexpected branch should be rerun at 1,500 paired simulations before we treat it as a draft-day rule.\n")
 
 
