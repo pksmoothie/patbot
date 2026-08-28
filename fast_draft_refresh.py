@@ -43,36 +43,43 @@ def main():
     delta = new_risk - old_risk.reindex(after.index)
     report = after[[
         "name", "pos", "team", "current_injury_status", "current_play_probability",
-        "off_field_risk_level", "fast_news_title", "risk_score",
+        "current_status_source", "current_status_material", "off_field_risk_level",
+        "fast_news_title", "risk_score",
     ]].copy()
     report["risk_delta"] = delta
 
+    material_flag = report["current_status_material"].fillna(False).astype(bool)
     alerts = report[
-        report["current_injury_status"].fillna("").astype(str).str.strip().ne("")
+        material_flag
         | report["off_field_risk_level"].fillna("none").astype(str).str.lower().ne("none")
         | report["fast_news_title"].fillna("").astype(str).str.strip().ne("")
         | report["risk_delta"].abs().ge(0.03)
     ].copy()
     alerts = alerts.sort_values(["risk_score", "risk_delta"], ascending=[False, False])
 
-    print("\nPatBot v0.5.2 fast draft-day injury/news refresh")
+    print("\nPatBot v0.5.3 fast draft-day injury/news refresh")
     print(f"Completed in {elapsed:.1f}s without refetching six-year history or projections.\n")
     for source, item in status.items():
         if item.get("ok"):
             extra = f" | matched {item['matched']}" if item.get("matched") is not None else ""
             if item.get("alerts") is not None:
-                extra += f" | alerts {item['alerts']}"
+                extra += f" | material alerts {item['alerts']}"
             print(f"OK   {source}{extra}")
         else:
             print(f"WARN {source}: {item.get('error', 'unavailable')}")
 
-    print("\n=== CURRENT DRAFT-DAY ALERTS / MATERIAL RISK CHANGES ===\n")
+    print("\n=== MATERIAL DRAFT-DAY ALERTS / RISK CHANGES ===\n")
     if alerts.empty:
         print("No material current-status/news changes detected.")
     else:
         print(alerts.head(40).to_string(index=False))
 
-    print("\nThe live CSV has been updated in place. Streamlit will use these risk fields on its next rerun.\n")
+    soft = report[
+        report["current_status_source"].fillna("").eq("sleeper_soft")
+        & report["current_injury_status"].fillna("").astype(str).str.strip().ne("")
+    ]
+    print(f"\nSoft Sleeper-only status labels not treated as material alerts: {len(soft)}")
+    print("The live CSV has been updated in place. Streamlit will use these risk fields on its next rerun.\n")
 
 
 if __name__ == "__main__":
