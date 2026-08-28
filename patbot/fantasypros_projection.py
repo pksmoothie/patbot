@@ -45,9 +45,10 @@ def _stats_dict(player: dict) -> dict:
 def fantasypros_stats_to_patbot(stats: dict) -> dict:
     """Normalize FantasyPros projection fields into PatBot's scorer schema.
 
-    FantasyPros' projection payload uses plural field names for many stats while
-    Sleeper uses singular/abbreviated names. Keep the mapper permissive so small
-    upstream naming changes do not silently zero out an entire category.
+    FantasyPros' projection payload uses plural/prefixed field names for many
+    stats while Sleeper uses singular/abbreviated names. Keep the mapper
+    permissive so small upstream naming changes do not silently zero out an
+    entire category.
     """
     out = {
         "gp": _first_numeric(stats, "games", "game", "g", "gp", default=17.0),
@@ -57,10 +58,13 @@ def fantasypros_stats_to_patbot(stats: dict) -> dict:
         "pass_int": _first_numeric(stats, "pass_ints", "pass_int", "interceptions", "ints"),
         "rush_yd": _first_numeric(stats, "rush_yds", "rush_yd", "rushing_yds", "rush_yards"),
         "rush_td": _first_numeric(stats, "rush_tds", "rush_td", "rushing_tds"),
-        "rec": _first_numeric(stats, "rec", "receptions", "recs"),
+        "rec": _first_numeric(stats, "rec_rec", "rec", "receptions", "recs"),
         "rec_yd": _first_numeric(stats, "rec_yds", "rec_yd", "receiving_yds", "rec_yards"),
         "rec_td": _first_numeric(stats, "rec_tds", "rec_td", "receiving_tds"),
-        "fum_lost": _first_numeric(stats, "fumbles_lost", "fum_lost", "lost_fumbles"),
+        # FantasyPros' NFL projection feed historically labels the fantasy-scored
+        # fumble quantity simply as `fumbles`; include explicit lost-fumble names
+        # first, then use that feed field as the fallback.
+        "fum_lost": _first_numeric(stats, "fumbles_lost", "fum_lost", "lost_fumbles", "fumbles"),
         "st_td": _first_numeric(stats, "ret_tds", "return_tds", "st_td"),
         "fum_rec_td": _first_numeric(stats, "fum_rec_tds", "fum_rec_td", "off_fum_rec_td"),
     }
@@ -97,7 +101,7 @@ def fetch_fantasypros_preseason_projections(
         try:
             data = _fp_get(
                 f"nfl/{season}/projections",
-                {"position": pos, "week": 0},
+                {"position": pos, "week": 0, "scoring": "PPR"},
             )
             players = data.get("players") or []
             matched = 0
@@ -132,7 +136,7 @@ def fetch_fantasypros_preseason_projections(
                 "ok": matched > 0,
                 "matched": int(matched),
                 "returned": int(len(players)),
-                "endpoint": f"nfl/{season}/projections?position={pos}&week=0",
+                "endpoint": f"nfl/{season}/projections?position={pos}&week=0&scoring=PPR",
             }
         except Exception as exc:
             by_position[pos] = {
