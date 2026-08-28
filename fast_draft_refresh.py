@@ -57,7 +57,7 @@ def main():
     ].copy()
     alerts = alerts.sort_values(["risk_score", "risk_delta"], ascending=[False, False])
 
-    print("\nPatBot v0.5.3 fast draft-day injury/news refresh")
+    print("\nPatBot v0.5.4 fast draft-day injury/news refresh")
     print(f"Completed in {elapsed:.1f}s without refetching six-year history or projections.\n")
     for source, item in status.items():
         if item.get("ok"):
@@ -74,11 +74,11 @@ def main():
     else:
         print(alerts.head(40).to_string(index=False))
 
-    soft = report[
-        report["current_status_source"].fillna("").eq("sleeper_soft")
+    ignored = report[
+        report["current_status_source"].fillna("").eq("sleeper_ignored")
         & report["current_injury_status"].fillna("").astype(str).str.strip().ne("")
     ]
-    print(f"\nSoft Sleeper-only status labels not treated as material alerts: {len(soft)}")
+    print(f"\nSleeper-only soft status labels ignored for draft risk: {len(ignored)}")
     print("The live CSV has been updated in place. Streamlit will use these risk fields on its next rerun.\n")
 
 
