@@ -137,6 +137,19 @@ def _variant_players(players: pd.DataFrame, variant: str) -> tuple[pd.DataFrame,
     return out, coverage
 
 
+def _spearman_without_scipy(left: pd.Series, right: pd.Series) -> float:
+    """Spearman rank correlation using pandas' built-in Pearson path only.
+
+    pandas delegates method='spearman' to scipy. PatBot intentionally keeps its
+    runtime lightweight, so rank each series first and then calculate ordinary
+    Pearson correlation on the ranks. That is exactly Spearman correlation and
+    requires no scipy dependency.
+    """
+    left_rank = pd.to_numeric(left, errors="coerce").rank(method="average")
+    right_rank = pd.to_numeric(right, errors="coerce").rank(method="average")
+    return float(left_rank.corr(right_rank))
+
+
 def _projection_correlations(source_table: pd.DataFrame) -> pd.DataFrame:
     rank_cols = ["Sleeper Rank", "FP Rank", "Athletic Rank"]
     offense = source_table[source_table["pos"].isin(OFFENSE)].copy()
@@ -147,7 +160,7 @@ def _projection_correlations(source_table: pd.DataFrame) -> pd.DataFrame:
             if len(pair) < 3:
                 corr = np.nan
             else:
-                corr = float(pair[left].corr(pair[right], method="spearman"))
+                corr = _spearman_without_scipy(pair[left], pair[right])
             rows.append(
                 {
                     "Source A": left.replace(" Rank", ""),
