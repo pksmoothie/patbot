@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from patbot.fast_risk import (
+    _clean_status,
     _draft_day_status_probability,
     _history_components,
     _is_serious_sleeper_status,
@@ -18,6 +19,13 @@ def test_norm_id_removes_csv_float_suffix():
 def test_norm_id_handles_missing_values():
     assert _norm_id(None) == ""
     assert _norm_id(np.nan) == ""
+
+
+def test_clean_status_handles_missing_values():
+    assert _clean_status(None) == ""
+    assert _clean_status(np.nan) == ""
+    assert _clean_status("nan") == ""
+    assert _clean_status(" Questionable ") == "Questionable"
 
 
 def test_history_components_reuses_cached_slow_layer():
@@ -53,6 +61,13 @@ def test_uncorroborated_probable_is_ignored_on_draft_day():
     assert status == "Probable"
     assert probability == 1.0
     assert source == "sleeper_ignored"
+
+
+def test_missing_status_is_not_treated_as_ignored_label():
+    status, probability, source = _draft_day_status_probability(None, np.nan)
+    assert status == ""
+    assert probability == 1.0
+    assert source == "none"
 
 
 def test_hard_sleeper_status_still_matters_without_fantasypros():
