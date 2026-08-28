@@ -78,8 +78,9 @@ def _draft_day_status_probability(
 
     FantasyPros is the corroborating injury source. If it has a current row, use
     its explicit probability/status logic. Sleeper alone is still authoritative
-    for hard statuses such as PUP/IR/Out, but an uncorroborated preseason-style
-    `Questionable` label is treated as a soft signal rather than a 25% miss risk.
+    for hard statuses such as PUP/IR/Out/Doubtful, but uncorroborated soft labels
+    such as Questionable/Probable are informational only and add zero draft-day
+    risk penalty.
     """
     if fantasypros_item:
         status, probability = _status_probability(fantasypros_item, sleeper_status)
@@ -93,11 +94,7 @@ def _draft_day_status_probability(
         return status, 0.20, "sleeper_hard"
     if "doubt" in lower:
         return status, 0.50, "sleeper_hard"
-    if "question" in lower:
-        return status, 0.95, "sleeper_soft"
-    if "prob" in lower:
-        return status, 0.98, "sleeper_soft"
-    return status, 0.95, "sleeper_soft"
+    return status, 1.0, "sleeper_ignored"
 
 
 def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame, dict]:
@@ -191,8 +188,8 @@ def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame
             + 0.15 * off_component
         )
         sleeper_risk = _injury_risk({"injury_status": sleeper_injury_status})
-        if status_source == "sleeper_soft":
-            sleeper_risk = min(float(sleeper_risk), 0.05)
+        if status_source == "sleeper_ignored":
+            sleeper_risk = 0.0
         risk_score = max(sleeper_risk, min(1.0, risk_score))
 
         notes = []
@@ -203,7 +200,10 @@ def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame
             if history_scale < 1.0:
                 notes.append(f"young-player history weight {history_scale:.0%}")
         if current_status:
-            notes.append(f"{current_status} ({play_prob:.0%} play probability; {status_source})")
+            if status_source == "sleeper_ignored":
+                notes.append(f"{current_status} (Sleeper-only soft label ignored for draft risk)")
+            else:
+                notes.append(f"{current_status} ({play_prob:.0%} play probability; {status_source})")
         if news_item.get("title"):
             notes.append(f"news: {news_item['title']}")
         if manual_note:
@@ -256,7 +256,7 @@ def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame
             "refreshed_at_utc": refreshed_at,
             "note": (
                 "Fast refresh reused cached history/projections and updated only current Sleeper status plus FantasyPros injuries/news. "
-                "Uncorroborated Sleeper Questionable labels are soft draft-day signals, not 25% miss probabilities."
+                "Uncorroborated Sleeper soft labels are informational only and add zero draft-day risk penalty."
             ),
         },
     }
