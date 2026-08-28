@@ -10,10 +10,14 @@ import requests
 from .market import _known_name_match, _numeric, normalize_name
 
 YAHOO_DRAFT_ANALYSIS = "https://football.fantasysports.yahoo.com/f1/draftanalysis"
+# Yahoo's historical/current draft-analysis tabs use SD for snake/standard-draft
+# ADP (Avg Pick / Avg Round) and AD for auction/salary data (Avg Cost). PatBot
+# needs SD because Yahoo ADP is being used only as a room-behavior signal.
+YAHOO_ADP_TAB = "SD"
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/126.0 Safari/537.36 PatBot/0.5.9"
+    "Chrome/126.0 Safari/537.36 PatBot/0.5.9.1"
 )
 
 
@@ -102,7 +106,7 @@ def parse_yahoo_adp_tables(
     tables: list[pd.DataFrame],
     player_names: list[str],
 ) -> pd.DataFrame:
-    """Parse Yahoo's public Draft Analysis tables into matched PatBot ADP rows."""
+    """Parse Yahoo's public snake-draft analysis tables into PatBot ADP rows."""
     known = {normalize_name(x): x for x in player_names}
     best_rows: list[dict] = []
 
@@ -134,8 +138,17 @@ def parse_yahoo_adp_tables(
             best_rows = rows
 
     if not best_rows:
-        raise ValueError("Yahoo Draft Analysis page parsed but no usable ADP rows matched PatBot players.")
+        raise ValueError("Yahoo Draft Analysis page parsed but no usable Avg Pick rows matched PatBot players.")
     return pd.DataFrame(best_rows).drop_duplicates("name", keep="first").reset_index(drop=True)
+
+
+def _request_params(*, pos: str, count: int) -> dict:
+    return {
+        "pos": str(pos).upper(),
+        "sort": "DA_AP",
+        "tab": YAHOO_ADP_TAB,
+        "count": int(count),
+    }
 
 
 def _fetch_one_page(
@@ -146,12 +159,7 @@ def _fetch_one_page(
     count: int,
     timeout: int,
 ) -> pd.DataFrame:
-    params = {
-        "pos": str(pos).upper(),
-        "sort": "DA_AP",
-        "tab": "AD",
-        "count": int(count),
-    }
+    params = _request_params(pos=pos, count=count)
     response = session.get(YAHOO_DRAFT_ANALYSIS, params=params, timeout=timeout)
     if response.status_code == 429:
         raise RuntimeError("Yahoo Draft Analysis rate-limited the request (HTTP 429).")
@@ -163,12 +171,12 @@ def _fetch_one_page(
 def fetch_yahoo_adp(
     player_names: list[str],
     *,
-    max_players: int = 260,
-    page_size: int = 25,
+    max_players: int = 300,
+    page_size: int = 50,
     request_spacing_seconds: float = 0.35,
     timeout: int = 30,
 ) -> tuple[pd.DataFrame, dict]:
-    """Fetch Yahoo Basic ADP / All Drafts from the public Draft Analysis page.
+    """Fetch Yahoo snake-draft Avg Pick from the public Draft Analysis page.
 
     Yahoo ADP is a room-behavior input only. This function does not alter PatBot
     projections, VORP, expert rank, or the broader market-value signal.
@@ -176,9 +184,11 @@ def fetch_yahoo_adp(
     session = _session()
     collected: dict[str, dict] = {}
     requests_made = 0
+    errors: list[str] = []
 
-    # Try the combined board first; if Yahoo changes that layout, fall back to
-    # position pages. Position fallback also helps when ALL pagination is sparse.
+    # Yahoo's draft-analysis pagination has historically advanced in 50-player
+    # offsets. Try the combined snake-draft board first; position pages provide a
+    # fallback if ALL changes layout or becomes sparse.
     for pos in ("ALL", "QB", "RB", "WR", "TE"):
         no_new_pages = 0
         for count in range(0, int(max_players), int(page_size)):
@@ -192,16 +202,15 @@ def fetch_yahoo_adp(
                     count=count,
                     timeout=int(timeout),
                 )
-            except Exception:
-                if pos == "ALL" and count == 0:
-                    break
+                requests_made += 1
+            except Exception as exc:
+                errors.append(f"{pos} count={count}: {type(exc).__name__}: {exc}")
                 if count == 0:
                     break
                 no_new_pages += 1
                 if no_new_pages >= 2:
                     break
                 continue
-            requests_made += 1
 
             before = len(collected)
             for _, row in page.iterrows():
@@ -211,8 +220,6 @@ def fetch_yahoo_adp(
             else:
                 no_new_pages = 0
 
-            # Yahoo position pages generally become empty/repetitive after the
-            # relevant pool is exhausted.
             if no_new_pages >= 2:
                 break
             if pos == "ALL" and len(collected) >= min(int(max_players), 180):
@@ -222,7 +229,11 @@ def fetch_yahoo_adp(
             break
 
     if not collected:
-        raise ValueError("Yahoo ADP fetch returned no matched players.")
+        detail = errors[0] if errors else "no parser detail available"
+        raise ValueError(
+            "Yahoo snake-draft ADP fetch returned no matched players. "
+            f"First page failure: {detail}"
+        )
 
     out = pd.DataFrame(collected.values()).drop_duplicates("name", keep="last")
     out = out.sort_values("yahoo_adp").reset_index(drop=True)
@@ -231,7 +242,8 @@ def fetch_yahoo_adp(
         "matched": int(len(out)),
         "requests": int(requests_made),
         "endpoint": YAHOO_DRAFT_ANALYSIS,
-        "note": "Yahoo Basic ADP / All Drafts; intended only for opponent behavior and availability modeling.",
+        "tab": YAHOO_ADP_TAB,
+        "note": "Yahoo snake-draft Avg Pick; intended only for opponent behavior and availability modeling.",
     }
     return out, status
 
