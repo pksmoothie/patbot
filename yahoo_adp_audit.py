@@ -25,13 +25,13 @@ def main():
     frame["existing_market_adp"] = pd.to_numeric(frame.get("adp"), errors="coerce")
     frame["Yahoo minus Existing"] = frame["yahoo_adp"] - frame["existing_market_adp"]
 
-    print("\nPatBot v0.5.9 Yahoo ADP / room-behavior audit")
+    print("\nPatBot v0.5.9.1 Yahoo ADP / room-behavior audit")
     print("DIAGNOSTIC ONLY: Yahoo ADP is not yet changing PatBot production picks.\n")
     print(
         f"Yahoo rows matched: {status['matched']} | HTTP requests: {status['requests']} | "
         f"cached locally: {CACHE_PATH}"
     )
-    print("Source: Yahoo Draft Analysis -> Basic ADP -> All Drafts.")
+    print("Source: Yahoo Draft Analysis -> snake/standard draft -> Avg Pick.")
     print("Purpose: predict what this specific room is likely to do, especially casual managers; not to decide player quality.\n")
 
     coverage = 100.0 * frame["yahoo_adp"].notna().mean()
