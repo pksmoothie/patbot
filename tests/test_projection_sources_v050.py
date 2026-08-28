@@ -97,9 +97,11 @@ def test_equal_blend_averages_available_projection_sources():
     assert coverage == 1.0
 
 
-def test_conditional_103_scenarios_are_generic_not_chase_locked():
+def test_conditional_103_scenarios_are_generic_and_ordered():
     assert ("Jahmyr Gibbs", "Bijan Robinson") in SCENARIOS
+    assert ("Bijan Robinson", "Jahmyr Gibbs") in SCENARIOS
     assert ("Jaxon Smith-Njigba", "Amon-Ra St. Brown") in SCENARIOS
+    assert ("Amon-Ra St. Brown", "Jaxon Smith-Njigba") in SCENARIOS
     assert len(SCENARIOS) == len(set(SCENARIOS))
     assert all(a != b for a, b in SCENARIOS)
     assert set(CORE_TOP).issubset(CANDIDATE_POOL)
