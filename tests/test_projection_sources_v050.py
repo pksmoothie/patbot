@@ -4,7 +4,7 @@ import pandas as pd
 from conditional_103_audit import CANDIDATE_POOL, CORE_TOP, SCENARIOS
 from patbot.fantasypros_projection import _stats_dict, fantasypros_stats_to_patbot
 from patbot.scoring import score_season_projection
-from projection_source_audit import _source_vorp, _variant_players
+from projection_source_audit import _source_vorp, _variant_players, _spearman_without_scipy
 
 
 SCORING = {
@@ -99,6 +99,12 @@ def test_equal_blend_averages_available_projection_sources():
     assert out.loc[0, "proj_points"] == 300.0
     assert out.loc[1, "proj_points"] == 210.0
     assert coverage == 1.0
+
+
+def test_spearman_helper_does_not_require_scipy():
+    left = pd.Series([1.0, 2.0, 3.0, 4.0])
+    right = pd.Series([40.0, 30.0, 20.0, 10.0])
+    assert _spearman_without_scipy(left, right) == -1.0
 
 
 def test_conditional_103_scenarios_are_generic_and_ordered():
