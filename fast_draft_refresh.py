@@ -49,15 +49,10 @@ def main():
     report["risk_delta"] = delta
 
     material_flag = report["current_status_material"].fillna(False).astype(bool)
-    alerts = report[
-        material_flag
-        | report["off_field_risk_level"].fillna("none").astype(str).str.lower().ne("none")
-        | report["fast_news_title"].fillna("").astype(str).str.strip().ne("")
-        | report["risk_delta"].abs().ge(0.03)
-    ].copy()
+    alerts = report[material_flag].copy()
     alerts = alerts.sort_values(["risk_score", "risk_delta"], ascending=[False, False])
 
-    print("\nPatBot v0.5.4 fast draft-day injury/news refresh")
+    print("\nPatBot v0.5.5 fast draft-day injury/news refresh")
     print(f"Completed in {elapsed:.1f}s without refetching six-year history or projections.\n")
     for source, item in status.items():
         if item.get("ok"):
@@ -68,9 +63,9 @@ def main():
         else:
             print(f"WARN {source}: {item.get('error', 'unavailable')}")
 
-    print("\n=== MATERIAL DRAFT-DAY ALERTS / RISK CHANGES ===\n")
+    print("\n=== MATERIAL DRAFT-DAY ALERTS ===\n")
     if alerts.empty:
-        print("No material current-status/news changes detected.")
+        print("No material current-status/news alerts detected.")
     else:
         print(alerts.head(40).to_string(index=False))
 
