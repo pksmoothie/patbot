@@ -1,6 +1,7 @@
 import pandas as pd
 
 from patbot.yahoo_adp import (
+    _browser_command,
     _request_params,
     behavioral_adp,
     manager_yahoo_weight,
@@ -71,3 +72,18 @@ def test_casuals_are_more_yahoo_anchored_than_sharp_managers():
     assert manager_yahoo_weight("market") > manager_yahoo_weight("league_aware")
     assert manager_yahoo_weight("league_aware") > manager_yahoo_weight("sharp")
     assert manager_yahoo_weight("sharp") > manager_yahoo_weight("extremely_sharp")
+
+
+def test_yahoo_remains_supporting_not_dominant_even_for_casuals():
+    assert manager_yahoo_weight("casual") <= 0.35
+    assert manager_yahoo_weight("casual") < 0.50
+
+
+def test_headless_browser_command_uses_isolated_profile_and_dump_dom():
+    command = _browser_command("msedge.exe", "https://example.test/yahoo", "C:/temp/patbot", 4000)
+    assert command[0] == "msedge.exe"
+    assert "--headless=new" in command
+    assert "--dump-dom" in command
+    assert "--user-data-dir=C:/temp/patbot" in command
+    assert "--virtual-time-budget=4000" in command
+    assert command[-1] == "https://example.test/yahoo"
