@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from io import StringIO
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
 import time
+from urllib.parse import urlencode
 
 import numpy as np
 import pandas as pd
@@ -10,14 +16,13 @@ import requests
 from .market import _known_name_match, _numeric, normalize_name
 
 YAHOO_DRAFT_ANALYSIS = "https://football.fantasysports.yahoo.com/f1/draftanalysis"
-# Yahoo's historical/current draft-analysis tabs use SD for snake/standard-draft
-# ADP (Avg Pick / Avg Round) and AD for auction/salary data (Avg Cost). PatBot
-# needs SD because Yahoo ADP is being used only as a room-behavior signal.
+# Yahoo's draft-analysis tabs use SD for snake/standard-draft ADP
+# (Avg Pick / Avg Round) and AD for auction/salary data (Avg Cost).
 YAHOO_ADP_TAB = "SD"
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/126.0 Safari/537.36 PatBot/0.5.9"
+    "Chrome/126.0 Safari/537.36 PatBot/0.5.9.2"
 )
 
 
@@ -151,6 +156,103 @@ def _request_params(*, pos: str, count: int) -> dict:
     }
 
 
+def _url_for_page(*, pos: str, count: int) -> str:
+    return f"{YAHOO_DRAFT_ANALYSIS}?{urlencode(_request_params(pos=pos, count=count))}"
+
+
+def _find_chromium_browser() -> str | None:
+    """Locate an installed Chromium-family browser without needing WebDriver.
+
+    Windows 10/11 normally ships with Microsoft Edge, so this lets PatBot render
+    Yahoo's JavaScript-backed public ADP page without adding Selenium/Playwright
+    or touching the user's normal browser profile.
+    """
+    override = (os.getenv("PATBOT_CHROMIUM_PATH") or "").strip()
+    if override and Path(override).exists():
+        return override
+
+    for command in ("msedge", "msedge.exe", "chrome", "chrome.exe", "chromium", "chromium.exe"):
+        found = shutil.which(command)
+        if found:
+            return found
+
+    roots = [
+        os.getenv("PROGRAMFILES(X86)"),
+        os.getenv("PROGRAMFILES"),
+        os.getenv("LOCALAPPDATA"),
+    ]
+    relative_paths = [
+        Path("Microsoft/Edge/Application/msedge.exe"),
+        Path("Google/Chrome/Application/chrome.exe"),
+        Path("Chromium/Application/chrome.exe"),
+    ]
+    for root in roots:
+        if not root:
+            continue
+        for relative in relative_paths:
+            candidate = Path(root) / relative
+            if candidate.exists():
+                return str(candidate)
+    return None
+
+
+def _browser_command(browser: str, url: str, user_data_dir: str, virtual_time_ms: int = 5000) -> list[str]:
+    """Build a side-effect-free headless browser command for Yahoo rendering."""
+    return [
+        str(browser),
+        "--headless=new",
+        "--disable-gpu",
+        "--disable-extensions",
+        "--disable-default-apps",
+        "--no-first-run",
+        "--log-level=3",
+        "--window-size=1600,1200",
+        f"--user-data-dir={user_data_dir}",
+        f"--virtual-time-budget={int(virtual_time_ms)}",
+        "--dump-dom",
+        str(url),
+    ]
+
+
+def _render_html_with_browser(url: str, *, timeout: int) -> tuple[str, str]:
+    browser = _find_chromium_browser()
+    if not browser:
+        raise RuntimeError(
+            "Yahoo returned a JavaScript-only page and PatBot could not find Microsoft Edge/Chrome for the headless fallback."
+        )
+
+    with tempfile.TemporaryDirectory(prefix="patbot_yahoo_") as tmp:
+        command = _browser_command(browser, url, tmp)
+        try:
+            completed = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=max(int(timeout) + 10, 20),
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("Headless browser timed out while rendering Yahoo Draft Analysis.") from exc
+
+    html = completed.stdout or ""
+    if completed.returncode != 0 or len(html) < 200:
+        detail = (completed.stderr or "").strip().splitlines()
+        detail_text = detail[-1] if detail else f"exit code {completed.returncode}"
+        raise RuntimeError(f"Headless browser could not render Yahoo Draft Analysis: {detail_text}")
+    return html, Path(browser).name
+
+
+def _parse_html_page(html: str, player_names: list[str]) -> pd.DataFrame:
+    try:
+        tables = pd.read_html(StringIO(html))
+    except ValueError as exc:
+        raise ValueError("No tables found") from exc
+    return parse_yahoo_adp_tables(tables, player_names)
+
+
 def _fetch_one_page(
     session: requests.Session,
     player_names: list[str],
@@ -158,14 +260,34 @@ def _fetch_one_page(
     pos: str,
     count: int,
     timeout: int,
-) -> pd.DataFrame:
-    params = _request_params(pos=pos, count=count)
-    response = session.get(YAHOO_DRAFT_ANALYSIS, params=params, timeout=timeout)
-    if response.status_code == 429:
-        raise RuntimeError("Yahoo Draft Analysis rate-limited the request (HTTP 429).")
-    response.raise_for_status()
-    tables = pd.read_html(StringIO(response.text))
-    return parse_yahoo_adp_tables(tables, player_names)
+    force_browser: bool = False,
+) -> tuple[pd.DataFrame, str]:
+    url = _url_for_page(pos=pos, count=count)
+    request_error: Exception | None = None
+
+    if not force_browser:
+        try:
+            response = session.get(url, timeout=timeout)
+            if response.status_code == 429:
+                raise RuntimeError("Yahoo Draft Analysis rate-limited the request (HTTP 429).")
+            response.raise_for_status()
+            return _parse_html_page(response.text, player_names), "requests"
+        except Exception as exc:
+            request_error = exc
+
+    # Yahoo increasingly serves Draft Analysis as a JS-backed shell to plain
+    # requests. Render it with the already-installed Edge/Chrome executable and
+    # dump the final DOM; no browser driver and no Yahoo login are required.
+    try:
+        html, browser_name = _render_html_with_browser(url, timeout=timeout)
+        return _parse_html_page(html, player_names), f"headless-{browser_name}"
+    except Exception as browser_exc:
+        if request_error is None:
+            raise
+        raise RuntimeError(
+            f"plain HTTP failed ({type(request_error).__name__}: {request_error}); "
+            f"headless fallback failed ({type(browser_exc).__name__}: {browser_exc})"
+        ) from browser_exc
 
 
 def fetch_yahoo_adp(
@@ -178,31 +300,39 @@ def fetch_yahoo_adp(
 ) -> tuple[pd.DataFrame, dict]:
     """Fetch Yahoo snake-draft Avg Pick from the public Draft Analysis page.
 
-    Yahoo ADP is a room-behavior input only. This function does not alter PatBot
-    projections, VORP, expert rank, or the broader market-value signal.
+    Yahoo ADP is a supporting room-behavior input only. It does not alter PatBot
+    projections, VORP, expert rank, Athletic/FantasyPros quality signals, or the
+    player's intrinsic valuation.
     """
     session = _session()
     collected: dict[str, dict] = {}
-    requests_made = 0
+    pages_loaded = 0
+    browser_pages = 0
     errors: list[str] = []
+    force_browser = False
+    transports: set[str] = set()
 
-    # Yahoo's draft-analysis pagination has historically advanced in 50-player
-    # offsets. Try the combined snake-draft board first; position pages provide a
-    # fallback if ALL changes layout or becomes sparse.
+    # Yahoo pagination advances in 50-player offsets. Try the combined board
+    # first; position pages are a fallback if ALL changes layout or becomes sparse.
     for pos in ("ALL", "QB", "RB", "WR", "TE"):
         no_new_pages = 0
         for count in range(0, int(max_players), int(page_size)):
-            if requests_made:
+            if pages_loaded:
                 time.sleep(max(0.0, float(request_spacing_seconds)))
             try:
-                page = _fetch_one_page(
+                page, transport = _fetch_one_page(
                     session,
                     player_names,
                     pos=pos,
                     count=count,
                     timeout=int(timeout),
+                    force_browser=force_browser,
                 )
-                requests_made += 1
+                pages_loaded += 1
+                transports.add(transport)
+                if transport.startswith("headless-"):
+                    browser_pages += 1
+                    force_browser = True
             except Exception as exc:
                 errors.append(f"{pos} count={count}: {type(exc).__name__}: {exc}")
                 if count == 0:
@@ -240,10 +370,13 @@ def fetch_yahoo_adp(
     status = {
         "ok": True,
         "matched": int(len(out)),
-        "requests": int(requests_made),
+        "requests": int(pages_loaded),
+        "pages_loaded": int(pages_loaded),
+        "browser_pages": int(browser_pages),
+        "transport": ", ".join(sorted(transports)) if transports else "unknown",
         "endpoint": YAHOO_DRAFT_ANALYSIS,
         "tab": YAHOO_ADP_TAB,
-        "note": "Yahoo snake-draft Avg Pick; intended only for opponent behavior and availability modeling.",
+        "note": "Yahoo snake-draft Avg Pick; supporting input only for opponent behavior and availability modeling.",
     }
     return out, status
 
