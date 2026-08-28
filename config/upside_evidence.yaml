@@ -1,0 +1,169 @@
+# Curated expert sleeper/upside evidence for PatBot.
+# This file is intentionally evidence, not a player preference list. Multiple
+# articles from the same publisher count as one independent source in the model.
+# Notes are short paraphrases of public analysis; no article text is copied.
+
+sources:
+  rotoworld_sleepers_20260818:
+    publisher: Rotoworld
+    analyst: Rotoworld staff
+    independence_key: rotoworld
+    quality: 0.95
+    published: "2026-08-18"
+    url: "https://www.nbcsports.com/fantasy/football/news/fantasy-football-sleepers-2026-keaton-mitchell-jaydon-blue-among-rotoworld-staff-picks"
+
+  yahoo_fantasy_forecast_20260804:
+    publisher: Yahoo Fantasy Forecast
+    analyst: Matt Harmon / Justin Boone
+    independence_key: yahoo_fantasy
+    quality: 0.95
+    published: "2026-08-04"
+    url: "https://sports.yahoo.com/fantasy/article/10-sleepers-you-cannot-sleep-on-in-fantasy-drafts-040000766.html"
+
+  fantasypros_sleepers_20260820:
+    publisher: FantasyPros
+    analyst: FantasyPros staff
+    independence_key: fantasypros
+    quality: 0.90
+    published: "2026-08-20"
+    url: "https://www.fantasypros.com/2026/08/fantasy-football-sleepers-experts-target-in-drafts-2026/"
+
+  fantasypros_sleepers_20260813:
+    publisher: FantasyPros
+    analyst: FantasyPros staff
+    independence_key: fantasypros
+    quality: 0.90
+    published: "2026-08-13"
+    url: "https://www.fantasypros.com/2026/08/18-fantasy-football-sleepers-experts-love-to-draft-2026/"
+
+  fantasypros_wr_featured_20260825:
+    publisher: FantasyPros
+    analyst: Featured Pros panel
+    independence_key: fantasypros
+    quality: 0.88
+    published: "2026-08-25"
+    url: "https://www.fantasypros.com/2026/08/21-wide-receiver-sleepers-breakouts-experts-love-2026-fantasy-football/"
+
+# strength = how explicitly the analyst/source is recommending the player.
+# specificity = whether the case rests on a concrete role/usage/efficiency path.
+# objective_support marks evidence that cites usage, efficiency, depth-chart or
+# other observable football information rather than pure narrative/camp hype.
+evidence:
+  - player: Keaton Mitchell
+    source: rotoworld_sleepers_20260818
+    strength: 0.90
+    specificity: 0.90
+    objective_support: true
+    signal: role_plus_efficiency
+    note: "Explosive career efficiency plus a plausible receiving role and clear No. 2 back path."
+  - player: Keaton Mitchell
+    source: fantasypros_sleepers_20260813
+    strength: 0.72
+    specificity: 0.65
+    objective_support: false
+    signal: consensus_value
+    note: "FantasyPros sleeper consensus has him meaningfully ahead of market cost."
+
+  - player: KC Concepcion
+    source: rotoworld_sleepers_20260818
+    strength: 0.88
+    specificity: 0.82
+    objective_support: true
+    signal: target_path
+    note: "Rotoworld sees a credible path to leading Cleveland in receptions at double-digit-round cost."
+  - player: KC Concepcion
+    source: fantasypros_sleepers_20260820
+    strength: 0.86
+    specificity: 0.82
+    objective_support: true
+    signal: target_path_plus_camp
+    note: "FantasyPros cites college production, camp performance and a plausible team WR1 path."
+  - player: KC Concepcion
+    source: fantasypros_wr_featured_20260825
+    strength: 0.82
+    specificity: 0.78
+    objective_support: true
+    signal: late_round_role_upside
+    note: "Featured experts again identify a late-round path to a large target role."
+
+  - player: Wan'Dale Robinson
+    source: rotoworld_sleepers_20260818
+    strength: 0.88
+    specificity: 0.95
+    objective_support: true
+    signal: proven_volume_discount
+    note: "Back-to-back high-target seasons and a starting slot role make the WR4 draft price look cheap."
+  - player: Wan'Dale Robinson
+    source: fantasypros_sleepers_20260820
+    strength: 0.88
+    specificity: 0.95
+    objective_support: true
+    signal: proven_volume_discount
+    note: "FantasyPros independently highlights the repeated 130-plus target profile versus a WR49 price."
+
+  - player: Jaydon Blue
+    source: rotoworld_sleepers_20260818
+    strength: 0.82
+    specificity: 0.80
+    objective_support: true
+    signal: receiving_role
+    note: "Dallas still has a third-down role available and public coaching comments point to renewed involvement."
+  - player: Jaydon Blue
+    source: yahoo_fantasy_forecast_20260804
+    strength: 0.80
+    specificity: 0.72
+    objective_support: false
+    signal: sleeper_target
+    note: "Matt Harmon/Justin Boone sleeper discussion included Blue as a late upside target."
+
+  - player: Josh Downs
+    source: rotoworld_sleepers_20260818
+    strength: 0.84
+    specificity: 0.84
+    objective_support: true
+    signal: target_opportunity
+    note: "Reduced target competition and a broader route-tree case support a discounted PPR role."
+  - player: Josh Downs
+    source: yahoo_fantasy_forecast_20260804
+    strength: 0.82
+    specificity: 0.72
+    objective_support: false
+    signal: sleeper_target
+    note: "Matt Harmon/Justin Boone independently included Downs among their favorite sleepers."
+
+  - player: Terrance Ferguson
+    source: fantasypros_sleepers_20260820
+    strength: 0.76
+    specificity: 0.82
+    objective_support: true
+    signal: contingent_role_plus_efficiency
+    note: "Small-sample explosiveness plus a thin depth chart creates a cheap contingent-upside case."
+  - player: Terrance Ferguson
+    source: yahoo_fantasy_forecast_20260804
+    strength: 0.80
+    specificity: 0.70
+    objective_support: false
+    signal: sleeper_target
+    note: "Matt Harmon/Justin Boone independently identified Ferguson as a late sleeper."
+
+  - player: De'Zhaun Stribling
+    source: rotoworld_sleepers_20260818
+    strength: 0.82
+    specificity: 0.88
+    objective_support: true
+    signal: preseason_usage_plus_role
+    note: "Rotoworld highlighted preseason production and a realistic path to an early receiving role."
+  - player: De'Zhaun Stribling
+    source: fantasypros_sleepers_20260813
+    strength: 0.90
+    specificity: 0.92
+    objective_support: true
+    signal: athletic_profile_plus_role
+    note: "FantasyPros cites college efficiency, athleticism and San Francisco depth-chart opportunity."
+  - player: De'Zhaun Stribling
+    source: fantasypros_wr_featured_20260825
+    strength: 0.90
+    specificity: 0.92
+    objective_support: true
+    signal: preseason_usage_plus_role
+    note: "Featured experts reinforce the preseason production and role-upside case."
