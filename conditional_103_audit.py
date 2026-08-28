@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import time
 
 import pandas as pd
 
@@ -58,16 +59,30 @@ def _opening_history(players: pd.DataFrame, cfg: dict, gone: tuple[str, str]) ->
     return rows
 
 
-def run_conditional_103(players: pd.DataFrame, cfg: dict, runs: int = 300) -> pd.DataFrame:
+def run_conditional_103(
+    players: pd.DataFrame,
+    cfg: dict,
+    runs: int = 300,
+    show_progress: bool = False,
+) -> pd.DataFrame:
     engine = DraftEngine(players, cfg)
     sim = FastDraftSimulator(engine)
     seed = int(cfg.get("simulation", {}).get("comparison_seed", 20260818)) + 103
     rows = []
+    total = len(SCENARIOS)
 
-    for gone in SCENARIOS:
+    for scenario_no, gone in enumerate(SCENARIOS, start=1):
+        scenario_started = time.perf_counter()
         history = _opening_history(players, cfg, gone)
         drafted_ids = {str(item["player_id"]) for item in history}
         available_candidates = [name for name in CANDIDATE_POOL if name not in gone]
+
+        if show_progress:
+            print(
+                f"[{scenario_no:02d}/{total}] {gone[0]} -> {gone[1]}: "
+                f"screening {len(available_candidates)} candidates...",
+                flush=True,
+            )
 
         scenario_rows = []
         for name in available_candidates:
@@ -106,6 +121,16 @@ def run_conditional_103(players: pd.DataFrame, cfg: dict, runs: int = 300) -> pd
             frame["Scenario Rank"] = range(1, len(frame) + 1)
             rows.extend(frame.to_dict("records"))
 
+            if show_progress:
+                runner_up = frame.iloc[1] if len(frame) > 1 else None
+                edge = leader - float(runner_up["Avg Lineup"]) if runner_up is not None else 0.0
+                elapsed = time.perf_counter() - scenario_started
+                print(
+                    f"         done in {elapsed:.1f}s | best: {frame.iloc[0]['Candidate']} "
+                    f"(+{edge:.2f} vs runner-up)",
+                    flush=True,
+                )
+
     return pd.DataFrame(rows)
 
 
@@ -136,14 +161,17 @@ def main():
     players = load_players("data/players_2026_live.csv")
     players["player_id"] = players["player_id"].astype(str)
 
-    print("\nPatBot v0.5.0 conditional 1.03 decision-tree audit")
-    print("This answers what PatBot should do if Paul/Faherty do NOT take Gibbs/Bijan as modeled.")
-    print(f"{len(SCENARIOS)} ordered top-two scenarios; 300 paired runs per candidate per scenario.")
-    print("This is a screen, not the final 1,500-run lock for close cases.\n")
+    print("\nPatBot v0.5.0 conditional 1.03 decision-tree audit", flush=True)
+    print("This answers what PatBot should do if Paul/Faherty do NOT take Gibbs/Bijan as modeled.", flush=True)
+    print(f"{len(SCENARIOS)} ordered top-two scenarios; 300 paired runs per candidate per scenario.", flush=True)
+    print("This is a screen, not the final 1,500-run lock for close cases.\n", flush=True)
 
-    results = run_conditional_103(players, cfg, runs=300)
+    started = time.perf_counter()
+    results = run_conditional_103(players, cfg, runs=300, show_progress=True)
     summary = _scenario_summary(results)
+    elapsed = time.perf_counter() - started
 
+    print(f"\nAll {len(SCENARIOS)} scenarios completed in {elapsed / 60.0:.1f} minutes.\n", flush=True)
     print("=== CONDITIONAL 1.03 TREE ===\n")
     print(summary.to_string(index=False))
 
