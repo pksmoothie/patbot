@@ -16,7 +16,7 @@ class FakeEngine:
                 "initial_runs": 30,
                 "refine_runs": 100,
                 "overturn_probe_margin": 2.5,
-                "overturn_required_margin": 6.0,
+                "overturn_required_margin": 10.0,
                 "future_rounds": 3,
                 "max_sim_round": 13,
                 "bypass_round": 14,
@@ -111,7 +111,7 @@ def test_strong_challenger_gets_confirmation_and_can_overturn():
         if kwargs["runs"] == 30:
             summary = pd.DataFrame(
                 [
-                    {"Candidate": "Beta", "Avg Lineup Score": 420.0},
+                    {"Candidate": "Beta", "Avg Lineup Score": 423.0},
                     {"Candidate": "Alpha", "Avg Lineup Score": 409.0},
                     {"Candidate": "Gamma", "Avg Lineup Score": 400.0},
                 ]
@@ -119,7 +119,7 @@ def test_strong_challenger_gets_confirmation_and_can_overturn():
         else:
             summary = pd.DataFrame(
                 [
-                    {"Candidate": "Beta", "Avg Lineup Score": 418.0},
+                    {"Candidate": "Beta", "Avg Lineup Score": 421.0},
                     {"Candidate": "Alpha", "Avg Lineup Score": 410.0},
                 ]
             )
@@ -139,6 +139,41 @@ def test_strong_challenger_gets_confirmation_and_can_overturn():
     assert result["recommendation"] == "Beta"
     assert result["base_agrees"] is False
     assert result["stage"] == "refined"
+
+
+def test_moderate_confirmed_challenger_edge_does_not_overturn_base_prior():
+    calls = []
+
+    def fake_compare(engine, **kwargs):
+        calls.append(kwargs["runs"])
+        if kwargs["runs"] == 30:
+            rows = [
+                {"Candidate": "Beta", "Avg Lineup Score": 420.0},
+                {"Candidate": "Alpha", "Avg Lineup Score": 409.0},
+                {"Candidate": "Gamma", "Avg Lineup Score": 400.0},
+            ]
+        else:
+            rows = [
+                {"Candidate": "Beta", "Avg Lineup Score": 416.2},
+                {"Candidate": "Alpha", "Avg Lineup Score": 410.0},
+            ]
+        summary = pd.DataFrame(rows)
+        return summary, _details(summary)
+
+    result = run_final_call(
+        FakeEngine(),
+        current_pick=3,
+        drafted_ids=set(),
+        my_roster_ids=[],
+        board=board_frame(),
+        draft_history=[],
+        compare_fn=fake_compare,
+    )
+    assert calls == [30, 100]
+    assert result["sim_winner"] == "Beta"
+    assert result["recommendation"] == "Alpha"
+    assert result["base_agrees"] is True
+    assert "+10.0 threshold" in result["reason"]
 
 
 def test_initial_challenge_must_survive_confirmation():
