@@ -1,58 +1,21 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-import time
-
 import pandas as pd
 
+from patbot import __version__
 from patbot.config import load_config
-from patbot.fast_risk import refresh_fast_risk
-
-
-CSV_PATH = Path("data/players_2026_live.csv")
-META_PATH = Path("data/players_2026_live.meta.json")
+from patbot.fast_refresh_pipeline import run_fast_refresh
 
 
 def main():
     cfg = load_config()
-    if not CSV_PATH.exists():
-        raise SystemExit("No live player snapshot found. Run UPDATE_AND_RUN.bat first.")
+    try:
+        after, status, alerts, elapsed = run_fast_refresh(cfg)
+    except Exception as exc:
+        print(f"\nERROR: {type(exc).__name__}: {exc}")
+        raise SystemExit(1)
 
-    before = pd.read_csv(CSV_PATH)
-    old_risk = pd.to_numeric(before.get("risk_score"), errors="coerce")
-
-    started = time.perf_counter()
-    after, status = refresh_fast_risk(before, cfg)
-    after.to_csv(CSV_PATH, index=False)
-
-    meta = {}
-    if META_PATH.exists():
-        try:
-            meta = json.loads(META_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            meta = {}
-    meta["fast_risk_sources"] = status
-    model_status = status.get("fast_risk_model", {})
-    if model_status.get("refreshed_at_utc"):
-        meta["fast_risk_refreshed_at_utc"] = model_status["refreshed_at_utc"]
-    META_PATH.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-
-    elapsed = time.perf_counter() - started
-    new_risk = pd.to_numeric(after.get("risk_score"), errors="coerce")
-    delta = new_risk - old_risk.reindex(after.index)
-    report = after[[
-        "name", "pos", "team", "current_injury_status", "current_play_probability",
-        "current_status_source", "current_status_material", "off_field_risk_level",
-        "fast_news_title", "risk_score",
-    ]].copy()
-    report["risk_delta"] = delta
-
-    material_flag = report["current_status_material"].fillna(False).astype(bool)
-    alerts = report[material_flag].copy()
-    alerts = alerts.sort_values(["risk_score", "risk_delta"], ascending=[False, False])
-
-    print("\nPatBot v0.5.5 fast draft-day injury/news refresh")
+    print(f"\nPatBot v{__version__} fast draft-day injury/news refresh")
     print(f"Completed in {elapsed:.1f}s without refetching six-year history or projections.\n")
     for source, item in status.items():
         if item.get("ok"):
@@ -69,11 +32,12 @@ def main():
     else:
         print(alerts.head(40).to_string(index=False))
 
-    ignored = report[
-        report["current_status_source"].fillna("").eq("sleeper_ignored")
-        & report["current_injury_status"].fillna("").astype(str).str.strip().ne("")
-    ]
-    print(f"\nSleeper-only soft status labels ignored for draft risk: {len(ignored)}")
+    if "current_status_source" in after.columns and "current_injury_status" in after.columns:
+        ignored = after[
+            after["current_status_source"].fillna("").eq("sleeper_ignored")
+            & after["current_injury_status"].fillna("").astype(str).str.strip().ne("")
+        ]
+        print(f"\nSleeper-only soft status labels ignored for draft risk: {len(ignored)}")
     print("The live CSV has been updated in place. Streamlit will use these risk fields on its next rerun.\n")
 
 
