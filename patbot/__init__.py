@@ -1,4 +1,4 @@
-__version__ = "0.6.5"
+__version__ = "0.6.6"
 
 from .opponent_history import install_owner_history_patch
 from .roster_strategy import install_roster_strategy_patch
