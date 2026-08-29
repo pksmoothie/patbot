@@ -13,13 +13,12 @@ def final_call_settings(config: dict) -> dict:
     return {
         "enabled": bool(cfg.get("enabled", True)),
         "min_candidates": max(2, int(cfg.get("min_candidates", 3))),
-        "max_candidates": max(2, int(cfg.get("max_candidates", 6))),
-        "score_gap": max(0.0, float(cfg.get("score_gap", 10.0))),
-        "initial_runs": max(50, int(cfg.get("initial_runs", 100))),
-        "refine_runs": max(50, int(cfg.get("refine_runs", 300))),
-        "final_runs": max(50, int(cfg.get("final_runs", 600))),
-        "refine_margin": max(0.0, float(cfg.get("refine_margin", 8.0))),
-        "final_margin": max(0.0, float(cfg.get("final_margin", 2.5))),
+        "max_candidates": max(2, int(cfg.get("max_candidates", 4))),
+        "score_gap": max(0.0, float(cfg.get("score_gap", 8.0))),
+        "initial_runs": max(20, int(cfg.get("initial_runs", 30))),
+        "refine_runs": max(40, int(cfg.get("refine_runs", 100))),
+        "overturn_probe_margin": max(0.0, float(cfg.get("overturn_probe_margin", 2.5))),
+        "overturn_required_margin": max(0.0, float(cfg.get("overturn_required_margin", 6.0))),
         "future_rounds": max(1, int(cfg.get("future_rounds", 3))),
         "max_sim_round": max(1, int(cfg.get("max_sim_round", 13))),
         "bypass_round": max(1, int(cfg.get("bypass_round", 14))),
@@ -29,9 +28,9 @@ def final_call_settings(config: dict) -> dict:
 def candidate_shortlist(board: pd.DataFrame, config: dict) -> pd.DataFrame:
     """Choose a compact legal candidate set from the production score board.
 
-    We always inspect at least a few alternatives, but do not spend draft-clock
-    time simulating clearly inferior score-board options unless they remain within
-    the configured PatBot-score neighborhood of the leader.
+    Final Call is a room-aware correction layer, not a second full ranking model.
+    It therefore inspects only a few plausible alternatives around the base score
+    leader so the recommendation can return comfortably inside a live draft clock.
     """
     if board is None or board.empty:
         return pd.DataFrame()
@@ -57,33 +56,28 @@ def _margin(summary: pd.DataFrame) -> float:
     return float(vals.iloc[0] - vals.iloc[1])
 
 
-def _ensure_base_candidate(ids: list[str], base_id: str, limit: int) -> list[str]:
-    out: list[str] = []
-    for pid in ids:
-        text = str(pid)
-        if text not in out:
-            out.append(text)
-    if str(base_id) not in out:
-        if len(out) >= int(limit):
-            out = out[: max(0, int(limit) - 1)]
-        out.append(str(base_id))
-    return out[: int(limit)]
-
-
 def _edge_label(edge: float) -> str:
     if edge >= 10.0:
         return "STRONG"
-    if edge >= 5.0:
+    if edge >= 6.0:
         return "CLEAR"
-    if edge >= 2.0:
+    if edge >= 2.5:
         return "LEAN"
     return "CLOSE"
+
+
+def _id_for_name(details: list[dict], name: str, fallback: str = "") -> str:
+    for item in details:
+        if str(item.get("candidate")) == str(name):
+            return str(item.get("candidate_id", fallback))
+    return str(fallback)
 
 
 def _decision_payload(
     summary: pd.DataFrame,
     details: list[dict],
     *,
+    recommendation: str,
     base_name: str,
     base_id: str,
     stage: str,
@@ -91,36 +85,35 @@ def _decision_payload(
     through_round: int,
     elapsed: float,
     shortlist: pd.DataFrame,
+    reason: str,
 ) -> dict:
-    winner = summary.iloc[0]
-    recommendation = str(winner["Candidate"])
-    detail_by_name = {str(x.get("candidate")): x for x in details}
-    winner_detail = detail_by_name.get(recommendation, {})
+    sim_winner = str(summary.iloc[0]["Candidate"])
     runner_up = str(summary.iloc[1]["Candidate"]) if len(summary) >= 2 else None
     edge = _margin(summary)
-    winner_id = str(winner_detail.get("candidate_id", ""))
-    base_agrees = recommendation == str(base_name)
-    reason = (
-        "Base score board and Yahoo-informed room simulation agree."
-        if base_agrees
-        else f"Room simulation overturns the base score leader ({base_name})."
+    recommendation_id = (
+        base_id
+        if str(recommendation) == str(base_name)
+        else _id_for_name(details, recommendation)
     )
     return {
         "ok": True,
         "fallback": False,
-        "recommendation": recommendation,
-        "candidate_id": winner_id,
+        "recommendation": str(recommendation),
+        "candidate_id": str(recommendation_id),
         "runner_up": runner_up,
         "edge": round(float(edge), 2) if edge != float("inf") else None,
         "edge_label": _edge_label(float(edge)) if edge != float("inf") else "ONLY OPTION",
+        "sim_winner": sim_winner,
+        "sim_winner_id": _id_for_name(details, sim_winner),
         "base_winner": str(base_name),
         "base_winner_id": str(base_id),
-        "base_agrees": bool(base_agrees),
+        "base_agrees": str(recommendation) == str(base_name),
+        "sim_agrees": str(recommendation) == sim_winner,
         "stage": str(stage),
         "runs": int(runs),
         "through_round": int(through_round),
         "elapsed_seconds": round(float(elapsed), 2),
-        "reason": reason,
+        "reason": str(reason),
         "summary": summary.reset_index(drop=True),
         "details": details,
         "shortlist": shortlist.reset_index(drop=True),
@@ -137,13 +130,14 @@ def run_final_call(
     draft_history: list[dict] | None = None,
     compare_fn: Callable = compare_candidates,
 ) -> dict:
-    """Return the actual draft recommendation, not merely the base score leader.
+    """Return the actual draft recommendation under a live-clock time budget.
 
-    Stage 1 compares a compact legal shortlist with common-random-number room
-    simulations. A close result, or any result that overturns the base board,
-    is automatically rerun at a larger sample. Extremely close refined calls get
-    one final two-player confirmation. Yahoo remains an opponent-behavior input
-    through FastDraftSimulator; it never becomes intrinsic player value here.
+    The base PatBot board is the prior. A small paired Yahoo-informed room screen
+    may confirm it immediately. A challenger only earns a larger confirmation if
+    it beats the base leader by a meaningful initial margin; after confirmation it
+    must still clear a stronger margin to overturn the base board. Close simulation
+    results therefore resolve to the base leader instead of spending 2-3 minutes
+    trying to manufacture certainty from Monte Carlo noise.
     """
     settings = final_call_settings(engine.config)
     if board is None or board.empty:
@@ -174,9 +168,12 @@ def run_final_call(
             "runner_up": None,
             "edge": None,
             "edge_label": "BASE BOARD",
+            "sim_winner": base_name,
+            "sim_winner_id": base_id,
             "base_winner": base_name,
             "base_winner_id": base_id,
             "base_agrees": True,
+            "sim_agrees": True,
             "stage": "base",
             "runs": 0,
             "through_round": round_no,
@@ -207,72 +204,103 @@ def run_final_call(
             draft_history=draft_history,
         )
         summary = summary.sort_values("Avg Lineup Score", ascending=False).reset_index(drop=True)
-        stage = "initial"
-        runs = int(settings["initial_runs"])
+        sim_winner = str(summary.iloc[0]["Candidate"])
+        initial_edge = _margin(summary)
 
-        initial_winner = str(summary.iloc[0]["Candidate"])
-        need_refine = (
-            _margin(summary) < float(settings["refine_margin"])
-            or initial_winner != base_name
-        )
-        if need_refine and int(settings["refine_runs"]) > runs:
-            name_to_id = {
-                str(row["name"]): str(row["player_id"])
-                for _, row in shortlist.iterrows()
-            }
-            refine_names = summary.head(3)["Candidate"].astype(str).tolist()
-            refine_ids = [name_to_id[x] for x in refine_names if x in name_to_id]
-            refine_ids = _ensure_base_candidate(refine_ids, base_id, 3)
-            summary, details = compare_fn(
-                engine,
-                current_pick=int(current_pick),
-                drafted_ids={str(x) for x in drafted_ids},
-                my_roster_ids=[str(x) for x in my_roster_ids],
-                candidate_ids=refine_ids,
-                runs=int(settings["refine_runs"]),
-                through_round=int(through_round),
-                draft_history=draft_history,
+        # The score board is the prior. If it also wins the first room screen,
+        # there is no reason to burn the clock resolving a small numerical edge.
+        if sim_winner == base_name:
+            return _decision_payload(
+                summary,
+                details,
+                recommendation=base_name,
+                base_name=base_name,
+                base_id=base_id,
+                stage="initial",
+                runs=int(settings["initial_runs"]),
+                through_round=through_round,
+                elapsed=perf_counter() - started,
+                shortlist=shortlist,
+                reason="Base score board and the fast Yahoo-informed room screen agree.",
             )
-            summary = summary.sort_values("Avg Lineup Score", ascending=False).reset_index(drop=True)
-            stage = "refined"
-            runs = int(settings["refine_runs"])
+
+        # A tiny challenger lead is not enough evidence to reopen the decision.
+        if initial_edge < float(settings["overturn_probe_margin"]):
+            return _decision_payload(
+                summary,
+                details,
+                recommendation=base_name,
+                base_name=base_name,
+                base_id=base_id,
+                stage="initial",
+                runs=int(settings["initial_runs"]),
+                through_round=through_round,
+                elapsed=perf_counter() - started,
+                shortlist=shortlist,
+                reason=(
+                    f"Room simulation slightly prefers {sim_winner}, but its +{initial_edge:.2f} edge "
+                    "is too small to justify overturning the base score leader."
+                ),
+            )
+
+        # Only a plausible overturn gets a second pass, and that pass compares
+        # the challenger directly with the base leader instead of three players.
+        name_to_id = {
+            str(row["name"]): str(row["player_id"])
+            for _, row in shortlist.iterrows()
+        }
+        challenger_id = name_to_id.get(sim_winner)
+        if challenger_id is None:
+            raise RuntimeError(f"Could not map room-sim challenger {sim_winner!r} to shortlist")
+
+        refine_ids = [str(challenger_id), str(base_id)]
+        summary, details = compare_fn(
+            engine,
+            current_pick=int(current_pick),
+            drafted_ids={str(x) for x in drafted_ids},
+            my_roster_ids=[str(x) for x in my_roster_ids],
+            candidate_ids=refine_ids,
+            runs=int(settings["refine_runs"]),
+            through_round=int(through_round),
+            draft_history=draft_history,
+        )
+        summary = summary.sort_values("Avg Lineup Score", ascending=False).reset_index(drop=True)
+        confirmed_winner = str(summary.iloc[0]["Candidate"])
+        confirmed_edge = _margin(summary)
 
         if (
-            len(summary) >= 2
-            and _margin(summary) < float(settings["final_margin"])
-            and int(settings["final_runs"]) > runs
+            confirmed_winner != base_name
+            and confirmed_edge >= float(settings["overturn_required_margin"])
         ):
-            name_to_id = {
-                str(row["name"]): str(row["player_id"])
-                for _, row in shortlist.iterrows()
-            }
-            final_names = summary.head(2)["Candidate"].astype(str).tolist()
-            final_ids = [name_to_id[x] for x in final_names if x in name_to_id]
-            if len(final_ids) >= 2:
-                summary, details = compare_fn(
-                    engine,
-                    current_pick=int(current_pick),
-                    drafted_ids={str(x) for x in drafted_ids},
-                    my_roster_ids=[str(x) for x in my_roster_ids],
-                    candidate_ids=final_ids,
-                    runs=int(settings["final_runs"]),
-                    through_round=int(through_round),
-                    draft_history=draft_history,
+            recommendation = confirmed_winner
+            reason = (
+                f"Yahoo-informed room simulation confirms an overturn of {base_name}: "
+                f"{confirmed_winner} leads by {confirmed_edge:.2f} lineup points after confirmation."
+            )
+        else:
+            recommendation = base_name
+            if confirmed_winner == base_name:
+                reason = (
+                    f"The initial room-sim challenge did not survive confirmation; retain {base_name}."
                 )
-                summary = summary.sort_values("Avg Lineup Score", ascending=False).reset_index(drop=True)
-                stage = "final"
-                runs = int(settings["final_runs"])
+            else:
+                reason = (
+                    f"Room simulation still leans {confirmed_winner}, but the confirmed +{confirmed_edge:.2f} edge "
+                    f"does not clear the +{float(settings['overturn_required_margin']):.1f} threshold required to overturn {base_name}."
+                )
 
         return _decision_payload(
             summary,
             details,
+            recommendation=recommendation,
             base_name=base_name,
             base_id=base_id,
-            stage=stage,
-            runs=runs,
+            stage="refined",
+            runs=int(settings["refine_runs"]),
             through_round=through_round,
             elapsed=perf_counter() - started,
             shortlist=shortlist,
+            reason=reason,
         )
     except Exception as exc:
         return {
@@ -283,9 +311,12 @@ def run_final_call(
             "runner_up": None,
             "edge": None,
             "edge_label": "FALLBACK",
+            "sim_winner": base_name,
+            "sim_winner_id": base_id,
             "base_winner": base_name,
             "base_winner_id": base_id,
             "base_agrees": True,
+            "sim_agrees": True,
             "stage": "fallback",
             "runs": 0,
             "through_round": through_round,
