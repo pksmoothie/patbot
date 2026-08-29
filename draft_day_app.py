@@ -24,6 +24,7 @@ from patbot.draft_state import (
     team_slot_for_pick,
 )
 from patbot.fast_refresh_pipeline import run_fast_refresh
+from patbot.final_call import run_final_call
 from patbot.refresh_pipeline import run_full_refresh
 from patbot.sim import compare_candidates
 from patbot.yahoo_room_behavior import load_yahoo_room_cache
@@ -47,7 +48,12 @@ def _load_meta(path_text: str, mtime_ns: int) -> dict:
 
 
 def _clear_cached_outputs() -> None:
-    for key in ["sim_summary", "sim_details"]:
+    for key in [
+        "sim_summary",
+        "sim_details",
+        "final_call_signature",
+        "final_call_result",
+    ]:
         st.session_state.pop(key, None)
 
 
@@ -68,7 +74,7 @@ def _age_text(timestamp) -> str:
 st.set_page_config(page_title="PatBot Draft Day", layout="wide")
 st.title("PatBot — 2026 Draft Day")
 st.caption(
-    f"v{__version__} • production projections • fast injury/news layer • "
+    f"v{__version__} • automatic Final Call • production projections • fast injury/news layer • "
     "expert late-round upside • fixed-manager room model • Yahoo supporting room signal"
 )
 
@@ -251,6 +257,33 @@ board = engine.recommend(
     top_n=18,
 )
 
+# Automatic actual recommendation. It runs once per unique on-clock draft state
+# and is cached in session state so tab changes do not burn the draft clock.
+final_call = None
+if is_my_pick and not board.empty:
+    data_mtime = player_path.stat().st_mtime_ns if player_path.exists() else 0
+    final_signature = (
+        int(current_pick),
+        tuple((int(p.get("overall_pick", 0)), str(p.get("player_id", ""))) for p in draft_history),
+        int(data_mtime),
+        tuple(board.head(6)["player_id"].astype(str).tolist()),
+    )
+    if st.session_state.get("final_call_signature") != final_signature:
+        with st.spinner("PatBot is making the Final Call from the live room..."):
+            st.session_state.final_call_result = run_final_call(
+                engine,
+                current_pick=current_pick,
+                drafted_ids=drafted_ids,
+                my_roster_ids=my_roster_ids,
+                board=board,
+                draft_history=draft_history,
+            )
+            st.session_state.final_call_signature = final_signature
+    final_call = st.session_state.get("final_call_result")
+else:
+    st.session_state.pop("final_call_signature", None)
+    st.session_state.pop("final_call_result", None)
+
 tab_board, tab_rosters, tab_log, tab_room, tab_sim = st.tabs(
     ["Draft Board", "Team Rosters", "Draft Log", "Room Model", "Simulation Lab"]
 )
@@ -258,10 +291,58 @@ tab_board, tab_rosters, tab_log, tab_room, tab_sim = st.tabs(
 with tab_board:
     left, right = st.columns([2.7, 1])
     with left:
-        st.subheader("Live recommendations")
+        st.subheader("Final Call")
+        if not is_my_pick:
+            st.info("Record the live Yahoo picks until PatBot is on the clock. The Final Call will run automatically.")
+        elif not final_call:
+            st.warning("No Final Call is available yet.")
+        else:
+            rec = str(final_call.get("recommendation", board.iloc[0]["name"]))
+            if final_call.get("fallback"):
+                st.warning(f"FINAL CALL FALLBACK — DRAFT **{rec}**")
+            else:
+                st.success(f"FINAL CALL — DRAFT **{rec}**")
+
+            m1, m2, m3, m4 = st.columns(4)
+            edge = final_call.get("edge")
+            m1.metric("Room-sim edge", "—" if edge is None else f"+{float(edge):.2f}")
+            m2.metric("Edge strength", str(final_call.get("edge_label", "—")))
+            m3.metric("Paired runs", int(final_call.get("runs", 0)))
+            m4.metric("Sim horizon", f"Round {int(final_call.get('through_round', ((current_pick - 1) // teams) + 1))}")
+
+            st.write(str(final_call.get("reason", "")))
+            if not yahoo_status.get("ok"):
+                st.caption("Yahoo supporting cache is unavailable/stale; Final Call is using the base opponent room model rather than failing.")
+            elif final_call.get("base_agrees"):
+                st.caption("The base PatBot score leader and the richer room simulation point to the same player.")
+            else:
+                st.caption(
+                    f"The automatic room simulation prefers {rec} over base score leader "
+                    f"{final_call.get('base_winner', '—')}."
+                )
+            st.caption(
+                f"Decision stage: {final_call.get('stage', '—')} • elapsed {float(final_call.get('elapsed_seconds', 0.0)):.1f}s. "
+                "Any simulation that overturns the base board is automatically rerun at a larger sample."
+            )
+
+            final_summary = final_call.get("summary")
+            if isinstance(final_summary, pd.DataFrame) and not final_summary.empty:
+                show_cols = [
+                    c
+                    for c in [
+                        "Candidate", "Avg Lineup Score", "10th %ile", "25th %ile",
+                        "75th %ile", "90th %ile", "League Winner Score", "Runs",
+                    ]
+                    if c in final_summary.columns
+                ]
+                with st.expander("Automatic Final Call comparison"):
+                    st.dataframe(final_summary[show_cols], use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.subheader("Base score board")
         st.caption(
-            "Market Survive Next % is the direct-board ADP survival heuristic. Yahoo's supporting signal "
-            "is currently used in the opponent simulations in Simulation Lab, not as intrinsic player value."
+            "This is PatBot's intrinsic/urgency/construction ranking. The Final Call above is the actual pick recommendation. "
+            "Market Survive Next % is the direct-board ADP heuristic; Yahoo's supporting signal enters the room simulation, not intrinsic value."
         )
         if board.empty:
             st.write("No available players.")
@@ -282,7 +363,7 @@ with tab_board:
                 "expert_upside_score_increment": "Expert Score +", "bye": "Bye",
             })
             st.dataframe(view, use_container_width=True, hide_index=True)
-            st.subheader("Current call")
+            st.subheader("Base score leader")
             st.write(engine.explain_row(board.iloc[0]))
 
     with right:
@@ -347,6 +428,7 @@ with tab_room:
 
 with tab_sim:
     st.subheader("Yahoo-informed Monte Carlo Draft Lab")
+    st.caption("The Draft Lab is optional deeper analysis. The automatic Final Call on the Draft Board is the production recommendation.")
     if not is_my_pick:
         st.write("Record the real picks ahead of PatBot first; run comparisons when PatBot is on the clock.")
     elif board.empty:
@@ -408,6 +490,6 @@ with tab_sim:
 
 st.divider()
 st.caption(
-    "Draft-day mode is intentionally narrower than the research app: reliable refresh, manual pick capture, "
-    "crash recovery, live board, room state and candidate simulations."
+    "Draft-day mode is intentionally narrow: the Final Call is the actual recommendation; the base score board, "
+    "room state and manual Draft Lab remain visible for transparency and deeper inspection."
 )
