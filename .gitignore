@@ -13,6 +13,7 @@ __pycache__/
 data/players_2026_live.csv
 data/players_2026_live.meta.json
 data/yahoo_adp_2026.csv
+data/draft_session_2026.json
 
 # Paid/private local ranking sources
 private_sources/*.xlsx
