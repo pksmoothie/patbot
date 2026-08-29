@@ -18,7 +18,7 @@ def final_call_settings(config: dict) -> dict:
         "initial_runs": max(20, int(cfg.get("initial_runs", 30))),
         "refine_runs": max(40, int(cfg.get("refine_runs", 100))),
         "overturn_probe_margin": max(0.0, float(cfg.get("overturn_probe_margin", 2.5))),
-        "overturn_required_margin": max(0.0, float(cfg.get("overturn_required_margin", 6.0))),
+        "overturn_required_margin": max(0.0, float(cfg.get("overturn_required_margin", 10.0))),
         "future_rounds": max(1, int(cfg.get("future_rounds", 3))),
         "max_sim_round": max(1, int(cfg.get("max_sim_round", 13))),
         "bypass_round": max(1, int(cfg.get("bypass_round", 14))),
@@ -135,9 +135,9 @@ def run_final_call(
     The base PatBot board is the prior. A small paired Yahoo-informed room screen
     may confirm it immediately. A challenger only earns a larger confirmation if
     it beats the base leader by a meaningful initial margin; after confirmation it
-    must still clear a stronger margin to overturn the base board. Close simulation
-    results therefore resolve to the base leader instead of spending 2-3 minutes
-    trying to manufacture certainty from Monte Carlo noise.
+    must still clear a much stronger margin to overturn the base board. Close or
+    modest simulation results therefore resolve to the base leader instead of
+    letting a noisy 100-run sample overrule the broader valuation model.
     """
     settings = final_call_settings(engine.config)
     if board is None or board.empty:
