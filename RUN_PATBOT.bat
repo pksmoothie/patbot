@@ -10,4 +10,4 @@ if not exist ".venv\Scripts\python.exe" (
   exit /b %errorlevel%
 )
 
-".venv\Scripts\python.exe" -m streamlit run app.py
+".venv\Scripts\python.exe" -m streamlit run draft_day_app.py
