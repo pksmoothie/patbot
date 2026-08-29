@@ -35,7 +35,7 @@ echo [3/4] Running tests...
 ".venv\Scripts\python.exe" -m pytest -q
 if errorlevel 1 goto :fail
 
-echo [4/4] Refreshing live player data...
+echo [4/4] Refreshing the full production draft-day data chain...
 ".venv\Scripts\python.exe" refresh_data.py
 if errorlevel 1 (
   echo.
@@ -44,8 +44,8 @@ if errorlevel 1 (
 )
 
 echo.
-echo Launching PatBot...
-".venv\Scripts\python.exe" -m streamlit run app.py
+echo Launching hardened PatBot Draft Day...
+".venv\Scripts\python.exe" -m streamlit run draft_day_app.py
 exit /b 0
 
 :fail
