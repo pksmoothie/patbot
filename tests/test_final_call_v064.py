@@ -11,13 +11,12 @@ class FakeEngine:
             "simulation": {"through_round": 8},
             "final_call": {
                 "min_candidates": 3,
-                "max_candidates": 6,
-                "score_gap": 10.0,
-                "initial_runs": 100,
-                "refine_runs": 300,
-                "final_runs": 600,
-                "refine_margin": 8.0,
-                "final_margin": 2.5,
+                "max_candidates": 4,
+                "score_gap": 8.0,
+                "initial_runs": 30,
+                "refine_runs": 100,
+                "overturn_probe_margin": 2.5,
+                "overturn_required_margin": 6.0,
                 "future_rounds": 3,
                 "max_sim_round": 13,
                 "bypass_round": 14,
@@ -37,7 +36,7 @@ def board_frame():
     )
 
 
-def _details(summary, ids):
+def _details(summary):
     lookup = {"Alpha": "a", "Beta": "b", "Gamma": "c", "Delta": "d"}
     return [{"candidate": name, "candidate_id": lookup[name]} for name in summary["Candidate"].tolist()]
 
@@ -47,12 +46,69 @@ def test_shortlist_uses_score_neighborhood_but_keeps_minimum():
     assert short["name"].tolist() == ["Alpha", "Beta", "Gamma"]
 
 
-def test_final_call_refines_any_base_board_overturn():
+def test_base_winner_stops_after_fast_initial_screen():
+    calls = []
+
+    def fake_compare(engine, **kwargs):
+        calls.append(kwargs["runs"])
+        summary = pd.DataFrame(
+            [
+                {"Candidate": "Alpha", "Avg Lineup Score": 410.0},
+                {"Candidate": "Beta", "Avg Lineup Score": 408.0},
+                {"Candidate": "Gamma", "Avg Lineup Score": 400.0},
+            ]
+        )
+        return summary, _details(summary)
+
+    result = run_final_call(
+        FakeEngine(),
+        current_pick=3,
+        drafted_ids=set(),
+        my_roster_ids=[],
+        board=board_frame(),
+        draft_history=[],
+        compare_fn=fake_compare,
+    )
+    assert calls == [30]
+    assert result["recommendation"] == "Alpha"
+    assert result["stage"] == "initial"
+
+
+def test_tiny_initial_challenger_edge_does_not_burn_clock_or_overturn():
+    calls = []
+
+    def fake_compare(engine, **kwargs):
+        calls.append(kwargs["runs"])
+        summary = pd.DataFrame(
+            [
+                {"Candidate": "Beta", "Avg Lineup Score": 411.0},
+                {"Candidate": "Alpha", "Avg Lineup Score": 409.0},
+                {"Candidate": "Gamma", "Avg Lineup Score": 400.0},
+            ]
+        )
+        return summary, _details(summary)
+
+    result = run_final_call(
+        FakeEngine(),
+        current_pick=3,
+        drafted_ids=set(),
+        my_roster_ids=[],
+        board=board_frame(),
+        draft_history=[],
+        compare_fn=fake_compare,
+    )
+    assert calls == [30]
+    assert result["recommendation"] == "Alpha"
+    assert result["sim_winner"] == "Beta"
+    assert result["base_agrees"] is True
+
+
+def test_strong_challenger_gets_confirmation_and_can_overturn():
     calls = []
 
     def fake_compare(engine, **kwargs):
         calls.append((kwargs["runs"], list(kwargs["candidate_ids"])))
-        if kwargs["runs"] == 100:
+        if kwargs["runs"] == 30:
             summary = pd.DataFrame(
                 [
                     {"Candidate": "Beta", "Avg Lineup Score": 420.0},
@@ -65,10 +121,9 @@ def test_final_call_refines_any_base_board_overturn():
                 [
                     {"Candidate": "Beta", "Avg Lineup Score": 418.0},
                     {"Candidate": "Alpha", "Avg Lineup Score": 410.0},
-                    {"Candidate": "Gamma", "Avg Lineup Score": 399.0},
                 ]
             )
-        return summary, _details(summary, kwargs["candidate_ids"])
+        return summary, _details(summary)
 
     result = run_final_call(
         FakeEngine(),
@@ -79,30 +134,23 @@ def test_final_call_refines_any_base_board_overturn():
         draft_history=[],
         compare_fn=fake_compare,
     )
-    assert [x[0] for x in calls] == [100, 300]
+    assert [x[0] for x in calls] == [30, 100]
+    assert calls[1][1] == ["b", "a"]
     assert result["recommendation"] == "Beta"
-    assert result["base_winner"] == "Alpha"
     assert result["base_agrees"] is False
     assert result["stage"] == "refined"
 
 
-def test_final_call_uses_final_confirmation_when_refined_margin_is_tiny():
+def test_initial_challenge_must_survive_confirmation():
     calls = []
 
     def fake_compare(engine, **kwargs):
         calls.append(kwargs["runs"])
-        runs = kwargs["runs"]
-        if runs == 100:
+        if kwargs["runs"] == 30:
             rows = [
-                {"Candidate": "Alpha", "Avg Lineup Score": 410.0},
-                {"Candidate": "Beta", "Avg Lineup Score": 405.0},
-                {"Candidate": "Gamma", "Avg Lineup Score": 390.0},
-            ]
-        elif runs == 300:
-            rows = [
-                {"Candidate": "Beta", "Avg Lineup Score": 411.0},
-                {"Candidate": "Alpha", "Avg Lineup Score": 410.0},
-                {"Candidate": "Gamma", "Avg Lineup Score": 389.0},
+                {"Candidate": "Beta", "Avg Lineup Score": 420.0},
+                {"Candidate": "Alpha", "Avg Lineup Score": 409.0},
+                {"Candidate": "Gamma", "Avg Lineup Score": 400.0},
             ]
         else:
             rows = [
@@ -110,7 +158,7 @@ def test_final_call_uses_final_confirmation_when_refined_margin_is_tiny():
                 {"Candidate": "Beta", "Avg Lineup Score": 410.0},
             ]
         summary = pd.DataFrame(rows)
-        return summary, _details(summary, kwargs["candidate_ids"])
+        return summary, _details(summary)
 
     result = run_final_call(
         FakeEngine(),
@@ -121,10 +169,9 @@ def test_final_call_uses_final_confirmation_when_refined_margin_is_tiny():
         draft_history=[],
         compare_fn=fake_compare,
     )
-    assert calls == [100, 300, 600]
+    assert calls == [30, 100]
     assert result["recommendation"] == "Alpha"
-    assert result["stage"] == "final"
-    assert result["runs"] == 600
+    assert result["stage"] == "refined"
 
 
 def test_round_14_bypasses_room_sim_and_uses_forced_base_board():
@@ -137,7 +184,7 @@ def test_round_14_bypasses_room_sim_and_uses_forced_base_board():
 
     result = run_final_call(
         FakeEngine(),
-        current_pick=159,  # Round 14 in a 12-team league.
+        current_pick=159,
         drafted_ids=set(),
         my_roster_ids=[],
         board=board_frame(),
