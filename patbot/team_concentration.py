@@ -78,6 +78,15 @@ def _round_multiplier(round_no: int, settings: dict) -> float:
     return float(m.get("14_plus", 0.0))
 
 
+def _pair_lookup(settings: dict, *, lineup: bool = False) -> np.ndarray:
+    table = settings["lineup_pair_penalty"] if lineup else settings["draft_pair_penalty"]
+    lookup = np.zeros((3, 3), dtype=float)
+    for a, ai in _POS_ORDER.items():
+        for b, bi in _POS_ORDER.items():
+            lookup[ai, bi] = float(table.get(_pair_key(a, b), 0.0))
+    return lookup
+
+
 def pair_penalty(pos_a: str, pos_b: str, config: dict | None = None, *, lineup: bool = False) -> float:
     """Generic same-team non-QB skill-player penalty; QB stacks are exempt."""
     a, b = str(pos_a).upper(), str(pos_b).upper()
@@ -126,7 +135,8 @@ def candidate_concentration_penalty(
     if not same_team:
         return 0.0, ""
 
-    raw = sum(pair_penalty(cpos, pos, config) for _, pos, _ in same_team)
+    table = settings["draft_pair_penalty"]
+    raw = sum(float(table.get(_pair_key(cpos, pos), 0.0)) for _, pos, _ in same_team)
     if len(same_team) >= 2:
         raw += float(settings.get("third_plus_draft_penalty", 2.0)) * (len(same_team) - 1)
     penalty = raw * _round_multiplier(round_no, settings)
@@ -161,7 +171,7 @@ def _starter_set(sim, mine: list[int], projection_override: np.ndarray | None = 
 
 
 def roster_concentration_penalty(sim, mine: list[int], projection_override: np.ndarray | None = None) -> float:
-    settings = concentration_settings(sim.cfg)
+    settings = getattr(sim, "_team_concentration_settings", None) or concentration_settings(sim.cfg)
     if not bool(settings.get("enabled", True)):
         return 0.0
     starters = _starter_set(sim, mine, projection_override)
@@ -173,12 +183,18 @@ def roster_concentration_penalty(sim, mine: list[int], projection_override: np.n
         if pos in _SKILL and _valid_team(team):
             grouped.setdefault(team, []).append(i)
 
+    lineup_lookup = getattr(sim, "_team_concentration_lineup_lookup", None)
+    if lineup_lookup is None:
+        lineup_lookup = _pair_lookup(settings, lineup=True)
+
     total = 0.0
     for idxs in grouped.values():
         if len(idxs) < 2:
             continue
         for a, b in combinations(idxs, 2):
-            base = pair_penalty(sim.pos[a], sim.pos[b], sim.cfg, lineup=True)
+            ai = _POS_ORDER.get(str(sim.pos[a]).upper(), -1)
+            bi = _POS_ORDER.get(str(sim.pos[b]).upper(), -1)
+            base = float(lineup_lookup[ai, bi]) if ai >= 0 and bi >= 0 else 0.0
             if a in starters and b in starters:
                 weight = 1.0
             elif a in starters or b in starters:
@@ -197,38 +213,61 @@ def roster_concentration_penalty(sim, mine: list[int], projection_override: np.n
 
 
 def _apply_sim_candidate_penalties(sim, score: np.ndarray, available: np.ndarray, pick: int) -> np.ndarray:
-    settings = concentration_settings(sim.cfg)
+    """Vectorized draft-score concentration penalty for the simulator hot path."""
+    settings = getattr(sim, "_team_concentration_settings", None) or concentration_settings(sim.cfg)
     multiplier = _round_multiplier((int(pick) - 1) // sim.teams + 1, settings)
     if not bool(settings.get("enabled", True)) or multiplier <= 0:
         return score
-    owned = set(getattr(sim, "_patbot_owned_idxs", set()))
+
+    owned = getattr(sim, "_patbot_owned_idxs", set())
     if not owned:
         return score
 
-    by_team: dict[str, list[str]] = {}
-    for idx in owned:
-        i = int(idx)
-        pos = str(sim.pos[i]).upper()
-        team = str(sim.nfl_team[i]).strip().upper()
-        if pos in _SKILL and _valid_team(team):
-            by_team.setdefault(team, []).append(pos)
-    if not by_team:
+    owned_idx = np.fromiter((int(i) for i in owned), dtype=np.int32)
+    if owned_idx.size == 0:
         return score
 
-    out = np.asarray(score, dtype=float).copy()
+    skill_code = sim._team_concentration_skill_code
+    team_code = sim._team_concentration_team_code
+    owned_valid = (skill_code[owned_idx] >= 0) & (team_code[owned_idx] >= 0)
+    owned_skill = owned_idx[owned_valid]
+    if owned_skill.size == 0:
+        return score
+
+    nteams = int(sim._team_concentration_team_count)
+    pos_counts = np.zeros((nteams, 3), dtype=np.int16)
+    np.add.at(pos_counts, (team_code[owned_skill], skill_code[owned_skill]), 1)
+    team_totals = pos_counts.sum(axis=1)
+
     available_mask = np.asarray(available, dtype=bool)
-    for team, owned_positions in by_team.items():
-        third_extra = (
-            float(settings.get("third_plus_draft_penalty", 2.0)) * (len(owned_positions) - 1)
-            if len(owned_positions) >= 2 else 0.0
-        )
-        team_mask = available_mask & (sim.nfl_team == team)
-        for candidate_pos in _SKILL:
-            mask = team_mask & (sim.pos == candidate_pos)
-            if not mask.any():
-                continue
-            raw = sum(pair_penalty(candidate_pos, pos, sim.cfg) for pos in owned_positions) + third_extra
-            out[mask] -= raw * multiplier
+    candidate_valid = available_mask & (skill_code >= 0) & (team_code >= 0)
+    candidate_idx = np.where(candidate_valid)[0]
+    if candidate_idx.size == 0:
+        return score
+
+    lookup = sim._team_concentration_draft_lookup
+    candidate_teams = team_code[candidate_idx]
+    candidate_pos = skill_code[candidate_idx]
+    same_team_counts = team_totals[candidate_teams]
+    has_exposure = same_team_counts > 0
+    if not has_exposure.any():
+        return score
+
+    candidate_idx = candidate_idx[has_exposure]
+    candidate_teams = candidate_teams[has_exposure]
+    candidate_pos = candidate_pos[has_exposure]
+    same_team_counts = same_team_counts[has_exposure]
+
+    raw = np.zeros(len(candidate_idx), dtype=float)
+    for pcode in range(3):
+        raw += pos_counts[candidate_teams, pcode] * lookup[candidate_pos, pcode]
+    raw += (
+        np.maximum(same_team_counts - 1, 0)
+        * float(settings.get("third_plus_draft_penalty", 2.0))
+    )
+
+    out = np.asarray(score, dtype=float).copy()
+    out[candidate_idx] -= raw * multiplier
     return out
 
 
@@ -301,6 +340,25 @@ def install_team_concentration_patch() -> None:
             self.players.get("team", pd.Series([""] * self.n))
             .fillna("").astype(str).str.upper().to_numpy()
         )
+        settings = concentration_settings(self.cfg)
+        self._team_concentration_settings = settings
+        self._team_concentration_draft_lookup = _pair_lookup(settings, lineup=False)
+        self._team_concentration_lineup_lookup = _pair_lookup(settings, lineup=True)
+        self._team_concentration_skill_code = np.array(
+            [_POS_ORDER.get(str(p).upper(), -1) for p in self.pos],
+            dtype=np.int8,
+        )
+        valid_teams = sorted({
+            str(team).strip().upper()
+            for team in self.nfl_team
+            if _valid_team(team)
+        })
+        team_lookup = {team: i for i, team in enumerate(valid_teams)}
+        self._team_concentration_team_code = np.array(
+            [team_lookup.get(str(team).strip().upper(), -1) for team in self.nfl_team],
+            dtype=np.int16,
+        )
+        self._team_concentration_team_count = len(valid_teams)
 
     def score_vector(self, available: np.ndarray, roster_counts: np.ndarray, pick: int) -> np.ndarray:
         base = np.asarray(original_score_vector(self, available, roster_counts, pick), dtype=float)
