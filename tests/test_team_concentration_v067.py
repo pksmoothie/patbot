@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from patbot.team_concentration import (
+    _apply_sim_candidate_penalties,
+    _pair_lookup,
     candidate_concentration_penalty,
     concentration_settings,
     pair_penalty,
@@ -103,3 +106,56 @@ def test_unrelated_team_has_zero_penalty():
 def test_default_lineup_penalties_preserve_pair_ordering():
     settings = concentration_settings({})
     assert settings["lineup_pair_penalty"]["WR|WR"] > settings["lineup_pair_penalty"]["RB|WR"]
+
+
+class _FakeSim:
+    def __init__(self):
+        self.cfg = {}
+        self.teams = 12
+        self.pos = np.array(["WR", "WR", "RB", "TE", "QB", "WR"], dtype=object)
+        self.nfl_team = np.array(["AAA", "AAA", "AAA", "AAA", "AAA", "BBB"], dtype=object)
+        self._patbot_owned_idxs = {0}
+        settings = concentration_settings(self.cfg)
+        self._team_concentration_settings = settings
+        self._team_concentration_draft_lookup = _pair_lookup(settings, lineup=False)
+        self._team_concentration_skill_code = np.array([1, 1, 0, 2, -1, 1], dtype=np.int8)
+        self._team_concentration_team_code = np.array([0, 0, 0, 0, 0, 1], dtype=np.int16)
+        self._team_concentration_team_count = 2
+
+
+def test_vectorized_sim_penalty_matches_scalar_candidate_penalties():
+    sim = _FakeSim()
+    score = np.full(6, 100.0)
+    available = np.array([False, True, True, True, True, True])
+    adjusted = _apply_sim_candidate_penalties(sim, score, available, pick=15)  # Round 2.
+
+    frame = _players()
+    for idx in [1, 2, 3, 4, 5]:
+        expected, _ = candidate_concentration_penalty(
+            frame,
+            candidate_idx=idx,
+            roster_indices=[0],
+            round_no=2,
+            config={},
+        )
+        assert adjusted[idx] == 100.0 - expected
+
+
+def test_vectorized_sim_penalty_preserves_third_player_escalation():
+    sim = _FakeSim()
+    sim._patbot_owned_idxs = {0, 1}
+    score = np.full(6, 100.0)
+    available = np.array([False, False, True, True, True, True])
+    adjusted = _apply_sim_candidate_penalties(sim, score, available, pick=27)  # Round 3.
+
+    frame = _players()
+    expected, _ = candidate_concentration_penalty(
+        frame,
+        candidate_idx=2,
+        roster_indices=[0, 1],
+        round_no=3,
+        config={},
+    )
+    assert adjusted[2] == 100.0 - expected
+    assert adjusted[4] == 100.0  # QB remains exempt.
+    assert adjusted[5] == 100.0  # Different NFL team remains exempt.
