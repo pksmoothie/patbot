@@ -126,6 +126,10 @@ def test_qb2_penalty_does_not_disappear_in_round_9():
     sim = FastDraftSimulator(engine)
     counts = np.zeros(len(sim.POSITIONS), dtype=np.int16)
     counts[sim.pos_to_code["QB"]] = 1
+    # Fill core skill starters so this test isolates the league-wide QB2
+    # baseline rather than v0.6.13's contextual starter-gap guardrail.
+    counts[sim.pos_to_code["RB"]] = 2
+    counts[sim.pos_to_code["WR"]] = 3
 
     r9 = sim._base_roster_need_penalty(counts, 9)
     r12 = sim._base_roster_need_penalty(counts, 12)
