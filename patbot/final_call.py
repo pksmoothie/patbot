@@ -5,6 +5,7 @@ from typing import Callable
 
 import pandas as pd
 
+from .decision_strategy import build_final_call_plan
 from .final_call_stability import paired_stability_check
 from .sim import compare_candidates
 
@@ -38,7 +39,12 @@ def final_call_settings(config: dict) -> dict:
 
 
 def candidate_shortlist(board: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """Choose a compact legal candidate set around the production score leader."""
+    """Legacy compact score-neighborhood shortlist used before the strategic prior.
+
+    v0.6.12 keeps this path for Rounds 1-3 and for callers that do not provide
+    enough live roster/room context. From Round 4 onward production Final Call
+    normally uses decision_strategy.build_final_call_plan instead.
+    """
     if board is None or board.empty:
         return pd.DataFrame()
     settings = final_call_settings(config)
@@ -83,6 +89,42 @@ def _id_for_name(details: list[dict], name: str, fallback: str = "") -> str:
     return str(fallback)
 
 
+def _strategy_metadata(plan: dict | None) -> dict:
+    plan = plan or {}
+    pressure = plan.get("pressure")
+    if isinstance(pressure, pd.DataFrame) and not pressure.empty:
+        pressure_records = pressure.to_dict("records")
+    else:
+        pressure_records = []
+    raw_row = plan.get("raw_base_row")
+    raw_name = str(raw_row["name"]) if raw_row is not None else None
+    return {
+        "strategy_active": bool(plan.get("strategy_active", False)),
+        "priority_positions": list(plan.get("priority_positions", []) or []),
+        "position_pressure": pressure_records,
+        "raw_base_winner": raw_name,
+    }
+
+
+def _strategy_reason_prefix(plan: dict | None, base_name: str) -> str:
+    meta = _strategy_metadata(plan)
+    if not meta["strategy_active"]:
+        return ""
+    pressure = meta["position_pressure"]
+    if pressure:
+        top = pressure[:2]
+        pressure_text = " > ".join(
+            f"{row['pos']} {float(row['pressure']):.2f}" for row in top
+        )
+        prefix = f"Position pressure {pressure_text}; strategic prior is {base_name}. "
+    else:
+        prefix = f"Strategic prior is {base_name}. "
+    raw = meta.get("raw_base_winner")
+    if raw and raw != base_name:
+        prefix += f"Raw score leader was {raw}. "
+    return prefix
+
+
 def _decision_payload(
     summary: pd.DataFrame,
     details: list[dict],
@@ -98,6 +140,7 @@ def _decision_payload(
     reason: str,
     paired_evidence: dict | None = None,
     evidence_pass: bool | None = None,
+    strategy_plan: dict | None = None,
 ) -> dict:
     sim_winner = str(summary.iloc[0]["Candidate"])
     runner_up = str(summary.iloc[1]["Candidate"]) if len(summary) >= 2 else None
@@ -115,6 +158,7 @@ def _decision_payload(
         edge_label = "UNSTABLE"
 
     paired_evidence = dict(paired_evidence or {})
+    strategy_meta = _strategy_metadata(strategy_plan)
     return {
         "ok": True,
         "fallback": False,
@@ -127,8 +171,12 @@ def _decision_payload(
         "sim_winner_id": _id_for_name(details, sim_winner),
         "base_winner": str(base_name),
         "base_winner_id": str(base_id),
+        "raw_base_winner": strategy_meta.get("raw_base_winner") or str(base_name),
         "base_agrees": str(recommendation) == str(base_name),
         "sim_agrees": str(recommendation) == sim_winner,
+        "strategy_active": strategy_meta.get("strategy_active", False),
+        "position_priority": strategy_meta.get("priority_positions", []),
+        "position_pressure": strategy_meta.get("position_pressure", []),
         "stage": str(stage),
         "runs": int(runs),
         "through_round": int(through_round),
@@ -161,23 +209,47 @@ def run_final_call(
 ) -> dict:
     """Return the live production recommendation under a draft-clock budget.
 
-    v0.6.10 uses a 30-run multi-candidate screen, then one continuous paired
-    challenger-vs-base stream. That stream checks the old 100-run confirmation,
-    can stop futile challenges at 200, and reaches 500 only when an overturn is
-    still genuinely plausible. Early stopping can only preserve the base board;
-    every actual overturn still requires the full large-sample gate.
+    v0.6.12 keeps the hardened 30 -> 100 -> 200 -> 500 paired evidence stream,
+    but changes what reaches that stream from Round 4 onward. A position-pressure
+    prior supplies multiple candidates from the roster's most important position,
+    keeps a secondary-position candidate, and always preserves global value
+    exceptions. Position is therefore a strong prior rather than a hard lock.
     """
     settings = final_call_settings(engine.config)
     if board is None or board.empty:
         return {"ok": False, "fallback": True, "reason": "No legal players on the base board."}
 
-    base = board.iloc[0]
-    base_name = str(base["name"])
-    base_id = str(base["player_id"])
     teams = int(engine.league["teams"])
     round_no = ((int(current_pick) - 1) // teams) + 1
+    raw_base = board.iloc[0]
+    raw_base_name = str(raw_base["name"])
+    raw_base_id = str(raw_base["player_id"])
 
-    shortlist = candidate_shortlist(board, engine.config)
+    strategy_plan = None
+    if round_no < int(settings["bypass_round"]):
+        try:
+            candidate_plan = build_final_call_plan(
+                board,
+                engine,
+                current_pick=int(current_pick),
+                my_roster_ids=[str(x) for x in my_roster_ids],
+                draft_history=draft_history,
+            )
+            if bool(candidate_plan.get("strategy_active", False)):
+                strategy_plan = candidate_plan
+        except Exception:
+            strategy_plan = None
+
+    if strategy_plan is not None:
+        shortlist = strategy_plan["shortlist"].copy()
+        base = strategy_plan["base_row"]
+    else:
+        shortlist = candidate_shortlist(board, engine.config)
+        base = raw_base
+
+    base_name = str(base["name"])
+    base_id = str(base["player_id"])
+
     if (
         not settings["enabled"]
         or round_no >= int(settings["bypass_round"])
@@ -191,17 +263,21 @@ def run_final_call(
         return {
             "ok": True,
             "fallback": False,
-            "recommendation": base_name,
-            "candidate_id": base_id,
+            "recommendation": raw_base_name if round_no >= int(settings["bypass_round"]) else base_name,
+            "candidate_id": raw_base_id if round_no >= int(settings["bypass_round"]) else base_id,
             "runner_up": None,
             "edge": None,
             "edge_label": "BASE BOARD",
-            "sim_winner": base_name,
-            "sim_winner_id": base_id,
-            "base_winner": base_name,
-            "base_winner_id": base_id,
+            "sim_winner": raw_base_name if round_no >= int(settings["bypass_round"]) else base_name,
+            "sim_winner_id": raw_base_id if round_no >= int(settings["bypass_round"]) else base_id,
+            "base_winner": raw_base_name if round_no >= int(settings["bypass_round"]) else base_name,
+            "base_winner_id": raw_base_id if round_no >= int(settings["bypass_round"]) else base_id,
+            "raw_base_winner": raw_base_name,
             "base_agrees": True,
             "sim_agrees": True,
+            "strategy_active": False if round_no >= int(settings["bypass_round"]) else bool(strategy_plan),
+            "position_priority": [] if strategy_plan is None else list(strategy_plan.get("priority_positions", [])),
+            "position_pressure": [] if strategy_plan is None else _strategy_metadata(strategy_plan)["position_pressure"],
             "stage": "base",
             "runs": 0,
             "through_round": round_no,
@@ -219,9 +295,11 @@ def run_final_call(
     )
     candidate_ids = shortlist["player_id"].astype(str).tolist()
     started = perf_counter()
+    strategy_prefix = _strategy_reason_prefix(strategy_plan, base_name)
 
     try:
-        # Fast screen: most picks end here.
+        # Fast screen: most picks end here. v0.6.12 may screen six candidates,
+        # but only one challenger can advance to the expensive paired stream.
         summary, details = compare_fn(
             engine,
             current_pick=int(current_pick),
@@ -237,6 +315,11 @@ def run_final_call(
         initial_edge = _margin(summary)
 
         if sim_winner == base_name:
+            reason = (
+                strategy_prefix + "Fast Yahoo-informed room screen agrees."
+                if strategy_prefix
+                else "Base score board and the fast Yahoo-informed room screen agree."
+            )
             return _decision_payload(
                 summary,
                 details,
@@ -248,7 +331,8 @@ def run_final_call(
                 through_round=through_round,
                 elapsed=perf_counter() - started,
                 shortlist=shortlist,
-                reason="Base score board and the fast Yahoo-informed room screen agree.",
+                reason=reason,
+                strategy_plan=strategy_plan,
             )
 
         if initial_edge < float(settings["overturn_probe_margin"]):
@@ -264,9 +348,11 @@ def run_final_call(
                 elapsed=perf_counter() - started,
                 shortlist=shortlist,
                 reason=(
-                    f"Room simulation slightly prefers {sim_winner}, but its +{initial_edge:.2f} edge "
-                    "is too small to justify reopening the base-board decision."
+                    strategy_prefix
+                    + f"Room simulation slightly prefers {sim_winner}, but its +{initial_edge:.2f} edge "
+                    "is too small to justify reopening the strategic-prior decision."
                 ),
+                strategy_plan=strategy_plan,
             )
 
         name_to_id = {
@@ -277,7 +363,7 @@ def run_final_call(
         if challenger_id is None:
             raise RuntimeError(f"Could not map room-sim challenger {sim_winner!r} to shortlist")
 
-        # One continuous paired stream now supplies the 100-run confirmation,
+        # One continuous paired stream supplies the 100-run confirmation,
         # 200-run futility checkpoint and, only when needed, the 500-run final gate.
         stable_summary, stable_details, paired = stability_fn(
             engine,
@@ -326,7 +412,8 @@ def run_final_call(
         if evidence_pass:
             recommendation = stable_winner
             reason = (
-                f"Paired stability check confirms an overturn of {base_name}: {stable_winner} "
+                strategy_prefix
+                + f"Paired stability check confirms an overturn of {base_name}: {stable_winner} "
                 f"leads by {paired_mean:.2f} lineup points across {actual_runs} paired runs, "
                 f"wins {paired_win_pct:.1f}% of paired rooms, and has a 95% paired CI of "
                 f"[{ci_low:+.2f}, {ci_high:+.2f}]."
@@ -336,14 +423,16 @@ def run_final_call(
             recommendation = base_name
             if stop_stage == "confirmation":
                 reason = (
-                    f"The initial room-sim challenge did not survive the {actual_runs}-run paired confirmation; "
+                    strategy_prefix
+                    + f"The initial room-sim challenge did not survive the {actual_runs}-run paired confirmation; "
                     f"retain {base_name}. {sim_winner} paired mean delta: {paired_mean:+.2f}; "
                     f"paired wins: {paired_win_pct:.1f}%; 95% CI [{ci_low:+.2f}, {ci_high:+.2f}]."
                 )
                 stage = "refined"
             elif stop_stage == "checkpoint":
                 reason = (
-                    f"The 100-run challenge became futile at the {actual_runs}-run paired stability checkpoint; "
+                    strategy_prefix
+                    + f"The 100-run challenge became futile at the {actual_runs}-run paired stability checkpoint; "
                     f"retain {base_name}. {sim_winner} paired mean delta: {paired_mean:+.2f}; "
                     f"paired wins: {paired_win_pct:.1f}%; 95% CI [{ci_low:+.2f}, {ci_high:+.2f}]. "
                     f"Checkpoint reason: {stop_reason}."
@@ -351,7 +440,8 @@ def run_final_call(
                 stage = "stabilized"
             elif stable_winner == base_name or paired_mean <= 0:
                 reason = (
-                    f"The challenge did not survive the {actual_runs}-run paired stability check; "
+                    strategy_prefix
+                    + f"The challenge did not survive the {actual_runs}-run paired stability check; "
                     f"retain {base_name}. {sim_winner} paired mean delta: {paired_mean:+.2f}; "
                     f"paired wins: {paired_win_pct:.1f}%; 95% CI [{ci_low:+.2f}, {ci_high:+.2f}]."
                 )
@@ -371,7 +461,8 @@ def run_final_call(
                         f"95% CI crosses zero [{ci_low:+.2f}, {ci_high:+.2f}]"
                     )
                 reason = (
-                    f"The {actual_runs}-run paired check still leans {stable_winner}, "
+                    strategy_prefix
+                    + f"The {actual_runs}-run paired check still leans {stable_winner}, "
                     f"but the evidence is not stable enough to overturn {base_name}: "
                     + "; ".join(failures)
                     + "."
@@ -392,6 +483,7 @@ def run_final_call(
             reason=reason,
             paired_evidence=paired,
             evidence_pass=evidence_pass,
+            strategy_plan=strategy_plan,
         )
     except Exception as exc:
         return {
@@ -406,13 +498,17 @@ def run_final_call(
             "sim_winner_id": base_id,
             "base_winner": base_name,
             "base_winner_id": base_id,
+            "raw_base_winner": raw_base_name,
             "base_agrees": True,
             "sim_agrees": True,
+            "strategy_active": bool(strategy_plan),
+            "position_priority": [] if strategy_plan is None else list(strategy_plan.get("priority_positions", [])),
+            "position_pressure": [] if strategy_plan is None else _strategy_metadata(strategy_plan)["position_pressure"],
             "stage": "fallback",
             "runs": 0,
             "through_round": through_round,
             "elapsed_seconds": round(perf_counter() - started, 2),
-            "reason": f"Final Call simulation failed; using base score leader. {type(exc).__name__}: {exc}",
+            "reason": f"Final Call simulation failed; using strategic prior. {type(exc).__name__}: {exc}",
             "summary": pd.DataFrame(),
             "details": [],
             "shortlist": shortlist,
