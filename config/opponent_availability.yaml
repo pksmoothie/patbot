@@ -1,0 +1,30 @@
+# v0.6.13 opponent-availability guardrails.
+#
+# Objective: protect PatBot's future-availability estimates, not make every
+# opponent roster look perfectly human. These are deliberately soft rank-score
+# penalties. A sufficiently large market/value fall can still override them.
+
+enabled: true
+start_round: 7
+through_round: 11
+
+# Backup single-position picks can distort the room when the manager still has
+# multiple required RB/WR starters open. Keep historical tendencies alive, but
+# make them compete with the actual roster circumstance.
+qb2_with_core_starter_gaps:
+  per_missing_starter_penalty: 18.0
+  max_penalty: 36.0
+  expected_demand_multiplier_per_missing_starter: 0.50
+
+te2_with_core_starter_gaps:
+  per_missing_starter_penalty: 10.0
+  max_penalty: 20.0
+
+# Only address extreme one-sided builds that can materially distort RB/WR
+# availability. Do not penalize ordinary RB3/WR4/FLEX or normal bench depth.
+extreme_one_sided_skill_hoarding:
+  enabled: true
+  extra_players_before_guardrail: 2
+  require_opposite_position_empty: true
+  base_penalty: 30.0
+  per_additional_player: 10.0
