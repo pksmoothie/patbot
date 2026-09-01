@@ -159,11 +159,13 @@ def test_qb_pool_demand_counts_qb1_need_not_repeated_turn_picks():
     assert 2.0 <= demand_810 < 2.2
 
     # At 9.03, slots 1 and 2 do not pick before 10.10. Give every upcoming
-    # manager QB1; only the tiny generic QB2 rate should remain.
+    # manager QB1. James is the one promoted multi-QB owner, so mark his QB2 as
+    # already drafted; only the tiny generic QB2 rate should remain.
     history = [
         {"owner_slot": slot, "pos": "QB", "player_id": f"q{slot}"}
         for slot in range(4, 13)
     ]
+    history.append({"owner_slot": 4, "pos": "QB", "player_id": "q4b"})
     demand_903 = expected_position_demand(
         engine,
         pos="QB",
