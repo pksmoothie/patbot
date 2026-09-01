@@ -1,0 +1,77 @@
+# v0.6.12 decision architecture.
+#
+# Separate three questions that were previously blended into one global score:
+#   1) Which position is most important right now?
+#   2) Who is the best player within that position?
+#   3) Is an off-position value so extreme that it should override roster need?
+#
+# Position pressure is a strong prior, never a hard positional lock. Final Call
+# still simulates global value exceptions, and the existing 500-run evidence gate
+# remains required for any statistical overturn.
+
+enabled: true
+strategic_prior_min_round: 4
+
+final_call:
+  max_candidates: 6
+  primary_position_candidates: 3
+  secondary_position_candidates: 1
+  global_value_candidates: 2
+  co_priority_pressure_gap: 0.10
+
+  # The strategic prior normally chooses the best quality player from the
+  # highest-pressure position(s). An off-priority player can become the prior
+  # immediately only when his quality edge clears this hurdle. He is still
+  # included as a global value candidate below the hurdle and can win via the
+  # normal paired Final Call process.
+  value_escape_quality_edge: 6.0
+  value_escape_extra_per_bench_slot: 4.0
+
+position_pressure:
+  need_weight: 0.60
+  wait_cost_weight: 0.30
+  opponent_demand_weight: 0.10
+
+  # Starter gaps are deliberately more important than merely filling a bench.
+  missing_one_signal: 0.55
+  additional_missing_signal: 0.15
+  open_flex_signal: 0.35
+  rb_wr_bench_signal: 0.10
+
+  # Multi-use positions (RB/WR) can use raw four-player scarcity because another
+  # player at the same position can still help the roster. Single-QB pressure
+  # instead uses the expected quality of the QB pool after real opponent demand.
+  raw_scarcity_scale: 25.0
+  quality_wait_cost_scale: 10.0
+  opponent_demand_scale: 3.0
+
+  # A deep one-QB pool should reduce urgency when expected QB demand cannot eat
+  # through the acceptable options before PatBot's next pick.
+  qb_viable_quality_gap: 8.0
+  qb_buffer_penalty_per_extra_option: 0.08
+  qb_buffer_penalty_max: 0.24
+
+  # Convert the 0-1 positional pressure signal back into enough score-space to be
+  # a meaningful prior without making it an absolute rule.
+  strategic_pressure_points: 15.0
+
+single_qb:
+  neutralize_player_survival_within_position: true
+  comparison_pool_size: 5
+
+opponent_demand:
+  # Generic QB2 demand is deliberately tiny. League-specific history showed only
+  # 13 total QBs drafted across all 12 teams and 15 rounds last season, so backup
+  # QB behavior should be exceptional rather than becoming neutral in Round 9.
+  historical_total_qbs_last_draft: 13
+  historical_rounds: 15
+  generic_qb2_expected_rate_per_team: 0.04
+  promoted_qb2_owner_expected_rate: 0.28
+  te2_expected_rate_per_team: 0.10
+  filled_rb_wr_pick_rate: 0.30
+  missing_rb_wr_pick_rate: 0.78
+
+opponent_qb2:
+  penalty_through_round_11: 34.0
+  penalty_round_12_plus: 24.0
+  qb3_plus_penalty: 120.0
