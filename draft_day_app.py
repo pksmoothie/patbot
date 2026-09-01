@@ -305,24 +305,38 @@ with tab_board:
 
             m1, m2, m3, m4 = st.columns(4)
             edge = final_call.get("edge")
-            m1.metric("Room-sim edge", "—" if edge is None else f"+{float(edge):.2f}")
-            m2.metric("Edge strength", str(final_call.get("edge_label", "—")))
+            m1.metric("Sim-leader edge", "—" if edge is None else f"+{float(edge):.2f}")
+            m2.metric("Sim edge strength", str(final_call.get("edge_label", "—")))
             m3.metric("Paired runs", int(final_call.get("runs", 0)))
             m4.metric("Sim horizon", f"Round {int(final_call.get('through_round', ((current_pick - 1) // teams) + 1))}")
 
             st.write(str(final_call.get("reason", "")))
             if not yahoo_status.get("ok"):
                 st.caption("Yahoo supporting cache is unavailable/stale; Final Call is using the base opponent room model rather than failing.")
-            elif final_call.get("base_agrees"):
-                st.caption("The base PatBot score leader and the richer room simulation point to the same player.")
+
+            base_winner = str(final_call.get("base_winner", rec))
+            sim_winner = str(final_call.get("sim_winner", rec))
+            if base_winner == sim_winner:
+                st.caption(
+                    f"The base PatBot score leader and the final room-simulation leader agree on {rec}."
+                )
+            elif rec == sim_winner and rec != base_winner:
+                st.caption(
+                    f"The confirmed room simulation materially overturns base score leader {base_winner}; "
+                    f"Final Call follows {sim_winner}."
+                )
+            elif rec == base_winner and rec != sim_winner:
+                st.caption(
+                    f"The room-simulation leader is {sim_winner}, but its edge did not clear the stability threshold; "
+                    f"Final Call retains base score leader {base_winner}."
+                )
             else:
                 st.caption(
-                    f"The automatic room simulation prefers {rec} over base score leader "
-                    f"{final_call.get('base_winner', '—')}."
+                    f"Final Call recommends {rec}; base score leader is {base_winner} and room-simulation leader is {sim_winner}."
                 )
             st.caption(
                 f"Decision stage: {final_call.get('stage', '—')} • elapsed {float(final_call.get('elapsed_seconds', 0.0)):.1f}s. "
-                "Any simulation that overturns the base board is automatically rerun at a larger sample."
+                "Any room-sim challenge strong enough to probe an overturn is automatically rerun at a larger sample."
             )
 
             final_summary = final_call.get("summary")
