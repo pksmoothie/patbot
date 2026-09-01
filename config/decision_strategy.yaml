@@ -17,7 +17,7 @@ final_call:
   primary_position_candidates: 3
   secondary_position_candidates: 1
   global_value_candidates: 2
-  co_priority_pressure_gap: 0.10
+  co_priority_pressure_gap: 0.04
 
   # The strategic prior normally chooses the best quality player from the
   # highest-pressure position(s). An off-priority player can become the prior
