@@ -70,6 +70,36 @@ def test_qb2_is_more_costly_when_core_skill_starters_are_still_open():
     assert np.allclose(gap_penalty[qb], 70.0)
 
 
+def test_james_qb2_tendency_yields_to_open_wr_starters_but_is_not_deleted():
+    sim = _sim()
+    available = np.zeros(sim.n, dtype=bool)
+    qb_idx = int(np.where(sim.pos == "QB")[0][0])
+    wr_idx = int(np.where(sim.pos == "WR")[0][0])
+    available[[qb_idx, wr_idx]] = True
+
+    market = np.full(sim.n, 999.0)
+    custom = np.full(sim.n, 999.0)
+    market[qb_idx] = custom[qb_idx] = 78.0
+    market[wr_idx] = custom[wr_idx] = 82.0
+    profile = sim._manager_profile(4, "casual")
+
+    # With two WR starters still open, the contextual guardrail outweighs
+    # James's real history-based QB2 nudge and the room takes the WR.
+    with_gaps = _counts(sim, QB=1, RB=3, WR=1, TE=1)
+    picked_with_gaps = sim.opponent_pick(
+        available.copy(), market, custom, with_gaps, 8, profile
+    )
+    assert picked_with_gaps == wr_idx
+
+    # Once the core RB/WR starters are filled, the guardrail disappears. The
+    # same small QB value fall can still activate James's promoted QB2 tendency.
+    filled = _counts(sim, QB=1, RB=3, WR=3, TE=1)
+    picked_filled = sim.opponent_pick(
+        available.copy(), market, custom, filled, 8, profile
+    )
+    assert picked_filled == qb_idx
+
+
 def test_extreme_rb_wr_hoarding_guardrail_only_starts_after_two_extra_players():
     sim = _sim()
 
