@@ -12,14 +12,21 @@ from .sim import compare_candidates
 def final_call_settings(config: dict) -> dict:
     cfg = config.get("final_call", {}) or {}
     min_win_pct = float(cfg.get("overturn_min_paired_win_pct", 55.0))
+    stability_runs = max(100, int(cfg.get("stability_runs", 500)))
+    refine_runs = max(40, int(cfg.get("refine_runs", 100)))
+    checkpoint_runs = min(
+        stability_runs,
+        max(refine_runs, int(cfg.get("stability_checkpoint_runs", 200))),
+    )
     return {
         "enabled": bool(cfg.get("enabled", True)),
         "min_candidates": max(2, int(cfg.get("min_candidates", 3))),
         "max_candidates": max(2, int(cfg.get("max_candidates", 4))),
         "score_gap": max(0.0, float(cfg.get("score_gap", 8.0))),
         "initial_runs": max(20, int(cfg.get("initial_runs", 30))),
-        "refine_runs": max(40, int(cfg.get("refine_runs", 100))),
-        "stability_runs": max(100, int(cfg.get("stability_runs", 500))),
+        "refine_runs": refine_runs,
+        "stability_checkpoint_runs": checkpoint_runs,
+        "stability_runs": stability_runs,
         "overturn_probe_margin": max(0.0, float(cfg.get("overturn_probe_margin", 2.5))),
         "overturn_required_margin": max(0.0, float(cfg.get("overturn_required_margin", 10.0))),
         "overturn_min_paired_win_pct": min(100.0, max(50.0, min_win_pct)),
@@ -31,24 +38,22 @@ def final_call_settings(config: dict) -> dict:
 
 
 def candidate_shortlist(board: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """Choose a compact legal candidate set from the production score board.
-
-    Final Call is a room-aware correction layer, not a second full ranking model.
-    It therefore inspects only a few plausible alternatives around the base score
-    leader so the recommendation can return comfortably inside a live draft clock.
-    """
+    """Choose a compact legal candidate set around the production score leader."""
     if board is None or board.empty:
         return pd.DataFrame()
     settings = final_call_settings(config)
     ordered = board.copy()
     ordered["score"] = pd.to_numeric(ordered["score"], errors="coerce")
-    ordered = ordered.sort_values(["score", "proj_points", "adp"], ascending=[False, False, True])
-    ordered = ordered.drop_duplicates(subset=["player_id"], keep="first")
+    ordered = ordered.sort_values(
+        ["score", "proj_points", "adp"], ascending=[False, False, True]
+    ).drop_duplicates(subset=["player_id"], keep="first")
 
     max_n = min(int(settings["max_candidates"]), len(ordered))
     min_n = min(int(settings["min_candidates"]), max_n)
     top_score = float(ordered.iloc[0]["score"])
-    within = ordered[(top_score - ordered["score"]) <= float(settings["score_gap"])].head(max_n)
+    within = ordered[
+        (top_score - ordered["score"]) <= float(settings["score_gap"])
+    ].head(max_n)
     if len(within) < min_n:
         within = ordered.head(min_n)
     return within.head(max_n).reset_index(drop=True)
@@ -98,8 +103,7 @@ def _decision_payload(
     runner_up = str(summary.iloc[1]["Candidate"]) if len(summary) >= 2 else None
     edge = _margin(summary)
     recommendation_id = (
-        base_id
-        if str(recommendation) == str(base_name)
+        base_id if str(recommendation) == str(base_name)
         else _id_for_name(details, recommendation)
     )
     edge_label = _edge_label(float(edge)) if edge != float("inf") else "ONLY OPTION"
@@ -135,6 +139,8 @@ def _decision_payload(
         "paired_win_pct": paired_evidence.get("paired_win_pct"),
         "paired_ci_low": paired_evidence.get("ci_low"),
         "paired_ci_high": paired_evidence.get("ci_high"),
+        "paired_stop_stage": paired_evidence.get("stop_stage"),
+        "paired_stop_reason": paired_evidence.get("stop_reason"),
         "paired_evidence_pass": evidence_pass,
         "summary": summary.reset_index(drop=True),
         "details": details,
@@ -153,13 +159,13 @@ def run_final_call(
     compare_fn: Callable = compare_candidates,
     stability_fn: Callable = paired_stability_check,
 ) -> dict:
-    """Return the actual draft recommendation under a live-clock time budget.
+    """Return the live production recommendation under a draft-clock budget.
 
-    The base PatBot board is the prior. A small Yahoo-informed room screen can
-    confirm it quickly. A challenger first has to survive a 100-run direct check.
-    Any challenger still strong enough to overturn the base prior then receives a
-    larger paired stability test. An overturn is allowed only when the large-sample
-    mean edge, paired win rate and paired confidence interval all support it.
+    v0.6.10 uses a 30-run multi-candidate screen, then one continuous paired
+    challenger-vs-base stream. That stream checks the old 100-run confirmation,
+    can stop futile challenges at 200, and reaches 500 only when an overturn is
+    still genuinely plausible. Early stopping can only preserve the base board;
+    every actual overturn still requires the full large-sample gate.
     """
     settings = final_call_settings(engine.config)
     if board is None or board.empty:
@@ -215,6 +221,7 @@ def run_final_call(
     started = perf_counter()
 
     try:
+        # Fast screen: most picks end here.
         summary, details = compare_fn(
             engine,
             current_pick=int(current_pick),
@@ -229,8 +236,6 @@ def run_final_call(
         sim_winner = str(summary.iloc[0]["Candidate"])
         initial_edge = _margin(summary)
 
-        # The score board is the prior. If it also wins the first room screen,
-        # there is no reason to burn the clock resolving a small numerical edge.
         if sim_winner == base_name:
             return _decision_payload(
                 summary,
@@ -246,7 +251,6 @@ def run_final_call(
                 reason="Base score board and the fast Yahoo-informed room screen agree.",
             )
 
-        # A tiny challenger lead is not enough evidence to reopen the decision.
         if initial_edge < float(settings["overturn_probe_margin"]):
             return _decision_payload(
                 summary,
@@ -261,12 +265,10 @@ def run_final_call(
                 shortlist=shortlist,
                 reason=(
                     f"Room simulation slightly prefers {sim_winner}, but its +{initial_edge:.2f} edge "
-                    "is too small to justify overturning the base score leader."
+                    "is too small to justify reopening the base-board decision."
                 ),
             )
 
-        # Only a plausible overturn gets a second pass, and that pass compares
-        # the challenger directly with the base leader instead of three players.
         name_to_id = {
             str(row["name"]): str(row["player_id"])
             for _, row in shortlist.iterrows()
@@ -275,60 +277,8 @@ def run_final_call(
         if challenger_id is None:
             raise RuntimeError(f"Could not map room-sim challenger {sim_winner!r} to shortlist")
 
-        refine_ids = [str(challenger_id), str(base_id)]
-        summary, details = compare_fn(
-            engine,
-            current_pick=int(current_pick),
-            drafted_ids={str(x) for x in drafted_ids},
-            my_roster_ids=[str(x) for x in my_roster_ids],
-            candidate_ids=refine_ids,
-            runs=int(settings["refine_runs"]),
-            through_round=int(through_round),
-            draft_history=draft_history,
-        )
-        summary = summary.sort_values("Avg Lineup Score", ascending=False).reset_index(drop=True)
-        confirmed_winner = str(summary.iloc[0]["Candidate"])
-        confirmed_edge = _margin(summary)
-
-        # If the challenger reverses or cannot clear the materiality hurdle at
-        # 100 runs, the base prior survives without paying for the larger audit.
-        if confirmed_winner == base_name:
-            return _decision_payload(
-                summary,
-                details,
-                recommendation=base_name,
-                base_name=base_name,
-                base_id=base_id,
-                stage="refined",
-                runs=int(settings["refine_runs"]),
-                through_round=through_round,
-                elapsed=perf_counter() - started,
-                shortlist=shortlist,
-                reason=f"The initial room-sim challenge did not survive confirmation; retain {base_name}.",
-            )
-
-        if confirmed_edge < float(settings["overturn_required_margin"]):
-            return _decision_payload(
-                summary,
-                details,
-                recommendation=base_name,
-                base_name=base_name,
-                base_id=base_id,
-                stage="refined",
-                runs=int(settings["refine_runs"]),
-                through_round=through_round,
-                elapsed=perf_counter() - started,
-                shortlist=shortlist,
-                reason=(
-                    f"Room simulation still leans {confirmed_winner}, but the confirmed +{confirmed_edge:.2f} edge "
-                    f"does not clear the +{float(settings['overturn_required_margin']):.1f} threshold required to overturn {base_name}."
-                ),
-            )
-
-        # v0.6.9: a 100-run mean is only a provisional challenge. The audit that
-        # exposed Puka/Chase showed that a +20 edge at 100 runs could reverse by
-        # 500. Every would-be overturn therefore gets an independent paired
-        # stability check before it is allowed to replace the base score leader.
+        # One continuous paired stream now supplies the 100-run confirmation,
+        # 200-run futility checkpoint and, only when needed, the 500-run final gate.
         stable_summary, stable_details, paired = stability_fn(
             engine,
             current_pick=int(current_pick),
@@ -339,24 +289,34 @@ def run_final_call(
             runs=int(settings["stability_runs"]),
             through_round=int(through_round),
             draft_history=draft_history,
+            confirmation_runs=int(settings["refine_runs"]),
+            checkpoint_runs=int(settings["stability_checkpoint_runs"]),
+            required_margin=float(settings["overturn_required_margin"]),
+            min_win_pct=float(settings["overturn_min_paired_win_pct"]),
+            require_positive_ci=bool(settings["overturn_require_positive_ci"]),
         )
         stable_summary = stable_summary.sort_values(
             "Avg Lineup Score", ascending=False
         ).reset_index(drop=True)
         stable_winner = str(stable_summary.iloc[0]["Candidate"])
-        stable_edge = _margin(stable_summary)
         paired_mean = float(paired.get("mean_delta", 0.0))
         paired_win_pct = float(paired.get("paired_win_pct", 0.0))
         ci_low = float(paired.get("ci_low", float("-inf")))
         ci_high = float(paired.get("ci_high", float("inf")))
+        actual_runs = int(paired.get("runs", len(stable_summary)))
+        stop_stage = str(paired.get("stop_stage", "full"))
+        stop_reason = str(paired.get("stop_reason", ""))
         min_win_pct = float(settings["overturn_min_paired_win_pct"])
         positive_ci_ok = (
             ci_low > 0.0
             if bool(settings["overturn_require_positive_ci"])
             else True
         )
+
         evidence_pass = (
-            stable_winner == confirmed_winner
+            stop_stage == "full"
+            and actual_runs >= int(settings["stability_runs"])
+            and stable_winner == sim_winner
             and stable_winner != base_name
             and paired_mean >= float(settings["overturn_required_margin"])
             and paired_win_pct >= min_win_pct
@@ -367,18 +327,35 @@ def run_final_call(
             recommendation = stable_winner
             reason = (
                 f"Paired stability check confirms an overturn of {base_name}: {stable_winner} "
-                f"leads by {paired_mean:.2f} lineup points across {int(settings['stability_runs'])} paired runs, "
+                f"leads by {paired_mean:.2f} lineup points across {actual_runs} paired runs, "
                 f"wins {paired_win_pct:.1f}% of paired rooms, and has a 95% paired CI of "
                 f"[{ci_low:+.2f}, {ci_high:+.2f}]."
             )
+            stage = "stabilized"
         else:
             recommendation = base_name
-            if stable_winner == base_name or paired_mean <= 0:
+            if stop_stage == "confirmation":
                 reason = (
-                    f"The 100-run challenge did not survive the {int(settings['stability_runs'])}-run paired stability check; "
-                    f"retain {base_name}. {confirmed_winner} paired mean delta: {paired_mean:+.2f}; "
+                    f"The initial room-sim challenge did not survive the {actual_runs}-run paired confirmation; "
+                    f"retain {base_name}. {sim_winner} paired mean delta: {paired_mean:+.2f}; "
                     f"paired wins: {paired_win_pct:.1f}%; 95% CI [{ci_low:+.2f}, {ci_high:+.2f}]."
                 )
+                stage = "refined"
+            elif stop_stage == "checkpoint":
+                reason = (
+                    f"The 100-run challenge became futile at the {actual_runs}-run paired stability checkpoint; "
+                    f"retain {base_name}. {sim_winner} paired mean delta: {paired_mean:+.2f}; "
+                    f"paired wins: {paired_win_pct:.1f}%; 95% CI [{ci_low:+.2f}, {ci_high:+.2f}]. "
+                    f"Checkpoint reason: {stop_reason}."
+                )
+                stage = "stabilized"
+            elif stable_winner == base_name or paired_mean <= 0:
+                reason = (
+                    f"The challenge did not survive the {actual_runs}-run paired stability check; "
+                    f"retain {base_name}. {sim_winner} paired mean delta: {paired_mean:+.2f}; "
+                    f"paired wins: {paired_win_pct:.1f}%; 95% CI [{ci_low:+.2f}, {ci_high:+.2f}]."
+                )
+                stage = "stabilized"
             else:
                 failures = []
                 if paired_mean < float(settings["overturn_required_margin"]):
@@ -390,13 +367,16 @@ def run_final_call(
                         f"paired wins {paired_win_pct:.1f}% < {min_win_pct:.1f}%"
                     )
                 if not positive_ci_ok:
-                    failures.append(f"95% CI crosses zero [{ci_low:+.2f}, {ci_high:+.2f}]")
+                    failures.append(
+                        f"95% CI crosses zero [{ci_low:+.2f}, {ci_high:+.2f}]"
+                    )
                 reason = (
-                    f"The {int(settings['stability_runs'])}-run paired check still leans {stable_winner}, "
+                    f"The {actual_runs}-run paired check still leans {stable_winner}, "
                     f"but the evidence is not stable enough to overturn {base_name}: "
                     + "; ".join(failures)
                     + "."
                 )
+                stage = "stabilized"
 
         return _decision_payload(
             stable_summary,
@@ -404,8 +384,8 @@ def run_final_call(
             recommendation=recommendation,
             base_name=base_name,
             base_id=base_id,
-            stage="stabilized",
-            runs=int(settings["stability_runs"]),
+            stage=stage,
+            runs=actual_runs,
             through_round=through_round,
             elapsed=perf_counter() - started,
             shortlist=shortlist,
