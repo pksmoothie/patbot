@@ -79,6 +79,9 @@ def opponent_availability_penalty(sim, roster_counts: np.ndarray, round_no: int)
     backup single-position picks made while core RB/WR starters are open, plus
     extreme RB-vs-WR one-sided hoarding. Lower opponent rank-score is better, so
     positive values here make the affected position less likely, never illegal.
+
+    These penalties are applied after ordinary roster_need_strength so a casual
+    manager's weak need-awareness does not dilute the anti-distortion layer.
     """
     settings = opponent_availability_settings()
     penalty = np.zeros(sim.n, dtype=float)
@@ -267,20 +270,14 @@ def _contextual_qb2_correction(
 
 
 def install_opponent_availability_patch() -> None:
-    """Install availability-focused opponent guardrails after decision strategy."""
+    """Install availability-focused expected-demand calibration after strategy."""
     global _INSTALLED
     if _INSTALLED:
         return
 
-    from .sim import FastDraftSimulator
     from . import decision_strategy as decision_strategy_module
 
-    original_need_penalty = FastDraftSimulator._base_roster_need_penalty
     original_expected_demand = decision_strategy_module.expected_position_demand
-
-    def roster_need_penalty_with_availability(self, roster_counts, round_no):
-        base = np.asarray(original_need_penalty(self, roster_counts, round_no), dtype=float).copy()
-        return base + opponent_availability_penalty(self, np.asarray(roster_counts), int(round_no))
 
     def expected_position_demand_with_context(
         engine,
@@ -306,6 +303,5 @@ def install_opponent_availability_patch() -> None:
         )
         return max(0.0, base - correction)
 
-    FastDraftSimulator._base_roster_need_penalty = roster_need_penalty_with_availability
     decision_strategy_module.expected_position_demand = expected_position_demand_with_context
     _INSTALLED = True
