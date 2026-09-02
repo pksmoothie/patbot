@@ -164,6 +164,8 @@ if "team_names" not in st.session_state:
         i: draft_order_cfg.get(i, "PatBot" if i == slot else f"Slot {i}")
         for i in range(1, teams + 1)
     }
+if "reset_draft_armed" not in st.session_state:
+    st.session_state.reset_draft_armed = False
 for i in range(1, teams + 1):
     if i in draft_order_cfg:
         st.session_state.team_names[i] = draft_order_cfg[i]
@@ -224,6 +226,7 @@ if st.sidebar.button(
             pos=row["pos"],
         )
     )
+    st.session_state.reset_draft_armed = False
     save_draft_session(st.session_state.draft_history)
     _clear_cached_outputs()
     st.rerun()
@@ -231,14 +234,28 @@ if st.sidebar.button(
 u1, u2 = st.sidebar.columns(2)
 if u1.button("Undo last", use_container_width=True, disabled=(len(draft_history) == 0)):
     st.session_state.draft_history.pop()
+    st.session_state.reset_draft_armed = False
     save_draft_session(st.session_state.draft_history)
     _clear_cached_outputs()
     st.rerun()
-if u2.button("Reset draft", use_container_width=True):
-    st.session_state.draft_history = []
-    clear_draft_session()
-    _clear_cached_outputs()
+if u2.button("Reset draft", use_container_width=True, disabled=(len(draft_history) == 0)):
+    st.session_state.reset_draft_armed = True
     st.rerun()
+
+if st.session_state.get("reset_draft_armed"):
+    st.sidebar.warning(
+        f"Reset will permanently clear all {len(draft_history)} recorded picks and the crash-recovery file."
+    )
+    r1, r2 = st.sidebar.columns(2)
+    if r1.button("Cancel reset", use_container_width=True):
+        st.session_state.reset_draft_armed = False
+        st.rerun()
+    if r2.button("Confirm reset", use_container_width=True, type="primary"):
+        st.session_state.draft_history = []
+        st.session_state.reset_draft_armed = False
+        clear_draft_session()
+        _clear_cached_outputs()
+        st.rerun()
 
 my_picks = all_team_picks(teams, slot)
 is_my_pick = current_pick in my_picks
