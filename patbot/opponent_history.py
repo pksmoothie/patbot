@@ -132,6 +132,19 @@ def install_owner_history_patch() -> None:
             tendency=profile.get(HISTORY_KEY),
         )
 
+        # v0.6.13: availability guardrails protect PatBot's simulated future
+        # player pool, so they are intentionally independent of an opponent's
+        # ordinary roster_need_strength. A casual manager can still draft oddly,
+        # but the anti-distortion layer is not diluted just because that manager
+        # is modeled as weakly need-aware.
+        from .opponent_availability import opponent_availability_penalty
+
+        score += opponent_availability_penalty(
+            self,
+            np.asarray(roster_counts),
+            int(round_no),
+        )
+
         score = np.where(available, score, 1_000_000_000.0)
         return int(np.argmin(score))
 
