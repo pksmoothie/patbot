@@ -7,6 +7,7 @@ import patbot
 from patbot.config import load_config
 from patbot.decision_strategy import expected_position_demand
 from patbot.draft import DraftEngine
+from patbot.opponent_availability import opponent_availability_penalty
 from patbot.sim import FastDraftSimulator
 
 
@@ -55,19 +56,24 @@ def test_v0613_is_installed():
     assert patbot.__version__ == "0.6.13"
 
 
-def test_qb2_is_more_costly_when_core_skill_starters_are_still_open():
+def test_qb2_availability_guardrail_is_separate_from_ordinary_need_penalty():
     sim = _sim()
     with_gaps = _counts(sim, QB=1, RB=2, WR=1, TE=1)
     filled = _counts(sim, QB=1, RB=2, WR=3, TE=1)
 
-    gap_penalty = sim._base_roster_need_penalty(with_gaps, 8)
-    filled_penalty = sim._base_roster_need_penalty(filled, 8)
+    base_gap = sim._base_roster_need_penalty(with_gaps, 8)
+    base_filled = sim._base_roster_need_penalty(filled, 8)
+    availability_gap = opponent_availability_penalty(sim, with_gaps, 8)
+    availability_filled = opponent_availability_penalty(sim, filled, 8)
     qb = sim.pos == "QB"
 
-    # v0.6.12 baseline remains 34. Two missing WR starters add the capped
-    # availability guardrail of 36 without making QB2 illegal.
-    assert np.allclose(filled_penalty[qb], 34.0)
-    assert np.allclose(gap_penalty[qb], 70.0)
+    # The league-calibrated QB2 baseline remains 34 either way. The separate
+    # anti-distortion layer contributes the full +36 when two WR starters are
+    # open, so James's 0.40 roster_need_strength cannot dilute it.
+    assert np.allclose(base_gap[qb], 34.0)
+    assert np.allclose(base_filled[qb], 34.0)
+    assert np.allclose(availability_gap[qb], 36.0)
+    assert np.allclose(availability_filled[qb], 0.0)
 
 
 def test_james_qb2_tendency_yields_to_open_wr_starters_but_is_not_deleted():
@@ -83,8 +89,8 @@ def test_james_qb2_tendency_yields_to_open_wr_starters_but_is_not_deleted():
     market[wr_idx] = custom[wr_idx] = 82.0
     profile = sim._manager_profile(4, "casual")
 
-    # With two WR starters still open, the contextual guardrail outweighs
-    # James's real history-based QB2 nudge and the room takes the WR.
+    # With two WR starters still open, the independent availability guardrail
+    # outweighs James's real history-based QB2 nudge and the room takes the WR.
     with_gaps = _counts(sim, QB=1, RB=3, WR=1, TE=1)
     picked_with_gaps = sim.opponent_pick(
         available.copy(), market, custom, with_gaps, 8, profile
@@ -92,7 +98,7 @@ def test_james_qb2_tendency_yields_to_open_wr_starters_but_is_not_deleted():
     assert picked_with_gaps == wr_idx
 
     # Once the core RB/WR starters are filled, the guardrail disappears. The
-    # same small QB value fall can still activate James's promoted QB2 tendency.
+    # same modest QB fall can still activate James's promoted QB2 tendency.
     filled = _counts(sim, QB=1, RB=3, WR=3, TE=1)
     picked_filled = sim.opponent_pick(
         available.copy(), market, custom, filled, 8, profile
@@ -111,10 +117,10 @@ def test_extreme_rb_wr_hoarding_guardrail_only_starts_after_two_extra_players():
     rb = sim.pos == "RB"
     wr = sim.pos == "WR"
 
-    assert np.allclose(sim._base_roster_need_penalty(rb3_wr0, 7)[rb], 0.0)
-    assert np.allclose(sim._base_roster_need_penalty(rb4_wr0, 7)[rb], 30.0)
-    assert np.allclose(sim._base_roster_need_penalty(wr4_rb0, 7)[wr], 0.0)
-    assert np.allclose(sim._base_roster_need_penalty(wr5_rb0, 7)[wr], 30.0)
+    assert np.allclose(opponent_availability_penalty(sim, rb3_wr0, 7)[rb], 0.0)
+    assert np.allclose(opponent_availability_penalty(sim, rb4_wr0, 7)[rb], 30.0)
+    assert np.allclose(opponent_availability_penalty(sim, wr4_rb0, 7)[wr], 0.0)
+    assert np.allclose(opponent_availability_penalty(sim, wr5_rb0, 7)[wr], 30.0)
 
 
 def test_extreme_value_can_still_beat_the_soft_hoarding_guardrail():
