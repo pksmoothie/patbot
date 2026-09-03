@@ -52,8 +52,8 @@ def _counts(sim, **positions):
     return counts
 
 
-def test_v0613_is_installed():
-    assert patbot.__version__ == "0.6.13"
+def test_v0614_is_installed():
+    assert patbot.__version__ == "0.6.14"
 
 
 def test_qb2_availability_guardrail_is_separate_from_ordinary_need_penalty():
