@@ -17,8 +17,10 @@ def _roster_positions(engine, my_roster_ids: list[str]) -> list[str]:
 
 
 def _has_live_fp_ids(engine, candidate_ids: list[str]) -> bool:
+    if not hasattr(engine, "players"):
+        return False
     frame = engine.players.copy()
-    if "fp_player_id" not in frame.columns:
+    if "fp_player_id" not in frame.columns or "player_id" not in frame.columns:
         return False
     frame["player_id"] = frame["player_id"].astype(str)
     subset = frame[frame["player_id"].isin({str(x) for x in candidate_ids})]
