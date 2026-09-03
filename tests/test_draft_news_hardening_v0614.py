@@ -13,7 +13,7 @@ def test_not_placed_on_ir_is_not_red():
     assert signal["play_probability_cap"] == 0.65
 
 
-def test_wide_news_pull_can_rescue_player_outside_priority_slice(monkeypatch):
+def test_fast_news_stays_broad_without_player_specific_archive_calls(monkeypatch):
     players = pd.DataFrame(
         [
             {
@@ -24,40 +24,28 @@ def test_wide_news_pull_can_rescue_player_outside_priority_slice(monkeypatch):
             }
         ]
     )
+    calls = []
 
-    monkeypatch.setattr(
-        "patbot.draft_news_hardening._ORIGINAL_FETCH",
-        lambda _players, _config: ({}, {"ok": True, "matched": 0}),
-    )
-    monkeypatch.setattr(
-        "patbot.draft_news_hardening.time.sleep",
-        lambda _seconds: None,
-    )
-    monkeypatch.setattr(
-        "patbot.draft_news_hardening._fp_get",
-        lambda _path, _params: {
-            "items": [
-                {
-                    "player_id": "123",
-                    "title": "Josh Jacobs placed on commissioner exempt list",
-                    "desc": "Jacobs is ineligible to practice or play while on the list.",
-                    "created": "2026-08-30 18:29:00",
-                }
-            ]
-        },
-    )
+    def fake_get(_path, params):
+        calls.append(dict(params))
+        return {"items": []}
+
+    monkeypatch.setattr("patbot.draft_news_hardening._fp_get", fake_get)
+    monkeypatch.setattr("patbot.draft_news_hardening.time.sleep", lambda _seconds: None)
 
     news, meta = fetch_draft_news(
         players,
         {
             "risk_model": {
                 "fantasypros_request_spacing_seconds": 0,
-                "draft_news_wide_limit": 500,
+                "draft_news_category_limit": 25,
                 "draft_news_max_age_days": 14,
             }
         },
     )
-    assert news["123"]["tier"] == "red"
-    assert news["123"]["play_probability_cap"] == 0.20
-    assert meta["wide_news"]["requested_limit"] == 500
-    assert meta["wide_news"]["active_overrides"] == 1
+
+    assert news == {}
+    assert len(calls) == 5
+    assert not any("fpid" in call for call in calls)
+    assert meta["successful_calls"] == 5
+    assert "Final Call" in meta["note"]
