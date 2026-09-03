@@ -224,6 +224,20 @@ def _item_timestamp(item: dict) -> pd.Timestamp | None:
         return None
 
 
+def _clean_fp_id(value) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    pid = str(value).strip()
+    if pid.endswith(".0") and pid[:-2].isdigit():
+        pid = pid[:-2]
+    return "" if pid.lower() in {"nan", "none", "null"} else pid
+
+
 def select_draft_news_signals(
     items: list[dict],
     *,
@@ -239,8 +253,13 @@ def select_draft_news_signals(
     Because items are processed newest-first, a GREEN resolution prevents an
     older RED/ORANGE story from lingering as an active draft penalty.
     """
-    known_ids = {str(x) for x in fp_ids if str(x)}
-    id_to_name = {str(k): str(v) for k, v in fp_id_to_name.items() if str(k) in known_ids}
+    known_ids = {_clean_fp_id(x) for x in fp_ids}
+    known_ids.discard("")
+    id_to_name = {
+        _clean_fp_id(k): str(v)
+        for k, v in fp_id_to_name.items()
+        if _clean_fp_id(k) in known_ids
+    }
     normalized_name_to_id = {
         normalize_name(name): pid
         for pid, name in id_to_name.items()
@@ -248,6 +267,8 @@ def select_draft_news_signals(
     }
 
     current = now if now is not None else pd.Timestamp.now(tz="UTC")
+    if not isinstance(current, pd.Timestamp):
+        current = pd.Timestamp(current)
     if current.tzinfo is None:
         current = current.tz_localize("UTC")
     else:
@@ -274,14 +295,14 @@ def select_draft_news_signals(
     classified = 0
     resolved = 0
 
-    for ts, item in recent:
+    for _ts, item in recent:
         text = _item_text(item)
         signal = classify_draft_news(text)
         if signal["tier"] == "none":
             continue
 
-        pid_raw = item.get("player_id")
-        pid = str(pid_raw) if pid_raw is not None else ""
+        pid_raw = _clean_fp_id(item.get("player_id"))
+        pid = pid_raw
         if pid not in known_ids:
             pid = _known_name_match(text, normalized_name_to_id) or ""
             if pid:
@@ -297,7 +318,7 @@ def select_draft_news_signals(
             **signal,
             "title": str(item.get("title") or ""),
             "created": str(item.get("created") or item.get("updated") or ""),
-            "matched_by": "player_id" if str(pid_raw or "") == pid else "player_name",
+            "matched_by": "player_id" if pid_raw == pid else "player_name",
         }
 
     active = {pid: item for pid, item in chosen.items() if not item.get("resolved")}
@@ -312,32 +333,69 @@ def select_draft_news_signals(
 
 
 def fetch_draft_news(players: pd.DataFrame, config: dict) -> tuple[dict[str, dict], dict]:
-    """Fetch a broad FantasyPros news window, then classify locally for materiality."""
+    """Fetch several relevant FantasyPros news slices, then classify locally.
+
+    One generic slice plus injury/transaction/rumor/breaking slices avoids
+    relying on the single most-recent 100 stories while keeping the request set
+    bounded and directly relevant to draft-day availability.
+    """
     fp_id_to_name = {}
     for _, row in players.iterrows():
-        pid = str(row.get("fp_player_id") or "").strip()
-        if pid.endswith(".0") and pid[:-2].isdigit():
-            pid = pid[:-2]
+        pid = _clean_fp_id(row.get("fp_player_id"))
         name = str(row.get("name") or "").strip()
-        if pid and pid.lower() not in {"nan", "none"} and name:
+        if pid and name:
             fp_id_to_name[pid] = name
 
     fp_ids = set(fp_id_to_name)
     if not fp_ids:
         return {}, {"ok": False, "error": "No cached FantasyPros player IDs in snapshot."}
 
-    spacing = float(config.get("risk_model", {}).get("fantasypros_request_spacing_seconds", 1.05))
-    if spacing > 0:
-        time.sleep(spacing)
+    rcfg = config.get("risk_model", {})
+    spacing = float(rcfg.get("fantasypros_request_spacing_seconds", 1.05))
+    category_limit = max(25, int(rcfg.get("draft_news_category_limit", 100)))
+    max_age_days = max(1, int(rcfg.get("draft_news_max_age_days", 14)))
+    categories = [None, "injury", "transaction", "rumor", "breaking"]
 
-    limit = max(100, int(config.get("risk_model", {}).get("draft_news_fetch_limit", 500)))
-    max_age_days = max(1, int(config.get("risk_model", {}).get("draft_news_max_age_days", 14)))
-    try:
-        data = _fp_get("nfl/news", {"limit": limit, "order_by": "updated"})
-    except Exception as exc:
-        return {}, {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    items_by_key: dict[str, dict] = {}
+    source_status = {}
+    successful_calls = 0
 
-    items = data.get("items") or []
+    for idx, category in enumerate(categories):
+        if idx > 0 and spacing > 0:
+            time.sleep(spacing)
+        params = {"limit": category_limit, "order_by": "updated"}
+        if category:
+            params["category"] = category
+        label = category or "all"
+        try:
+            data = _fp_get("nfl/news", params)
+            batch = data.get("items") or []
+            successful_calls += 1
+            source_status[label] = {"ok": True, "items": int(len(batch))}
+            for item in batch:
+                if not isinstance(item, dict):
+                    continue
+                key = str(item.get("id") or "").strip()
+                if not key:
+                    key = "|".join(
+                        [
+                            str(item.get("created") or ""),
+                            str(item.get("title") or ""),
+                            str(item.get("player_id") or ""),
+                        ]
+                    )
+                items_by_key[key] = item
+        except Exception as exc:
+            source_status[label] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    if not successful_calls:
+        errors = "; ".join(
+            f"{name}: {meta.get('error', 'failed')}"
+            for name, meta in source_status.items()
+        )
+        return {}, {"ok": False, "error": errors or "FantasyPros news calls failed."}
+
+    items = list(items_by_key.values())
     signals, meta = select_draft_news_signals(
         items,
         fp_ids=fp_ids,
@@ -351,8 +409,10 @@ def fetch_draft_news(players: pd.DataFrame, config: dict) -> tuple[dict[str, dic
             tier_counts[tier] += 1
     return signals, {
         **meta,
-        "items_returned": int(len(items)),
-        "requested_limit": int(limit),
+        "source_status": source_status,
+        "successful_calls": int(successful_calls),
+        "unique_items_returned": int(len(items)),
+        "category_limit": int(category_limit),
         "max_age_days": int(max_age_days),
         "tier_counts": tier_counts,
     }
