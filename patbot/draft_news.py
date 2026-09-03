@@ -7,6 +7,8 @@ import pandas as pd
 from .market import _fp_get, _known_name_match, normalize_name
 
 
+OFFENSE_POSITIONS = {"QB", "RB", "WR", "TE"}
+
 RESOLVED_NEWS_TERMS = (
     "removed from the commissioner's exempt list",
     "removed from commissioner's exempt list",
@@ -251,6 +253,43 @@ def _clean_fp_id(value) -> str:
     return "" if pid.lower() in {"nan", "none", "null"} else pid
 
 
+def _priority_fp_ids(players: pd.DataFrame, limit: int) -> list[str]:
+    """Return the offensive players most likely to matter to a PatBot decision.
+
+    A player stays priority if *any* major signal still likes him: projection
+    rank, ADP, expert rank or market rank. That is deliberate. A player whose
+    market rank collapses because of breaking news is exactly the player whose
+    stale projection could otherwise create a false PatBot value.
+    """
+    n = max(0, int(limit))
+    if n == 0 or players is None or players.empty:
+        return []
+
+    frame = players.copy()
+    frame = frame[frame["pos"].astype(str).str.upper().isin(OFFENSE_POSITIONS)].copy()
+    if frame.empty:
+        return []
+
+    frame["_fp_id"] = frame.get("fp_player_id", pd.Series(index=frame.index, dtype=object)).apply(_clean_fp_id)
+    frame = frame[frame["_fp_id"].ne("")].copy()
+    if frame.empty:
+        return []
+
+    proj = pd.to_numeric(frame.get("proj_points"), errors="coerce")
+    proj_rank = proj.rank(method="min", ascending=False)
+    signals = [proj_rank]
+    for col in ("adp", "expert_rank", "market_rank"):
+        if col in frame.columns:
+            values = pd.to_numeric(frame[col], errors="coerce")
+            values = values.where(values > 0)
+            signals.append(values)
+
+    frame["_priority"] = pd.concat(signals, axis=1).min(axis=1, skipna=True).fillna(9999.0)
+    frame["_projection"] = proj.fillna(-1.0)
+    ordered = frame.sort_values(["_priority", "_projection"], ascending=[True, False])
+    return ordered["_fp_id"].drop_duplicates().head(n).astype(str).tolist()
+
+
 def select_draft_news_signals(
     items: list[dict],
     *,
@@ -346,14 +385,18 @@ def select_draft_news_signals(
 
 
 def fetch_draft_news(players: pd.DataFrame, config: dict) -> tuple[dict[str, dict], dict]:
-    """Fetch several relevant FantasyPros news slices, then classify locally.
+    """Fetch broad news plus player-specific checks for draft-critical offense.
 
-    One generic slice plus injury/transaction/rumor/breaking slices avoids
-    relying on the single most-recent 100 stories while keeping the request set
-    bounded and directly relevant to draft-day availability.
+    Broad category slices provide cheap league-wide coverage. FantasyPros also
+    supports an `fpid` filter on /nfl/news, so PatBot follows those broad calls
+    with a bounded player-specific pass for the offensive assets most likely to
+    matter to a draft decision. K/DST are intentionally excluded from this
+    player-news layer; their individual personnel transactions should not become
+    fake availability alerts for a team defense.
     """
+    offense = players[players["pos"].astype(str).str.upper().isin(OFFENSE_POSITIONS)].copy()
     fp_id_to_name = {}
-    for _, row in players.iterrows():
+    for _, row in offense.iterrows():
         pid = _clean_fp_id(row.get("fp_player_id"))
         name = str(row.get("name") or "").strip()
         if pid and name:
@@ -361,11 +404,13 @@ def fetch_draft_news(players: pd.DataFrame, config: dict) -> tuple[dict[str, dic
 
     fp_ids = set(fp_id_to_name)
     if not fp_ids:
-        return {}, {"ok": False, "error": "No cached FantasyPros player IDs in snapshot."}
+        return {}, {"ok": False, "error": "No cached FantasyPros offensive player IDs in snapshot."}
 
     rcfg = config.get("risk_model", {})
     spacing = float(rcfg.get("fantasypros_request_spacing_seconds", 1.05))
     category_limit = max(25, int(rcfg.get("draft_news_category_limit", 100)))
+    player_limit = max(1, int(rcfg.get("draft_news_player_limit", 5)))
+    priority_limit = max(0, int(rcfg.get("draft_news_priority_player_limit", 48)))
     max_age_days = max(1, int(rcfg.get("draft_news_max_age_days", 14)))
     categories = [None, "injury", "transaction", "rumor", "breaking"]
 
@@ -373,10 +418,29 @@ def fetch_draft_news(players: pd.DataFrame, config: dict) -> tuple[dict[str, dic
     source_status = {}
     successful_calls = 0
 
+    def store_batch(batch) -> int:
+        stored = 0
+        for item in batch or []:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("id") or "").strip()
+            if not key:
+                key = "|".join(
+                    [
+                        str(item.get("created") or ""),
+                        str(item.get("title") or ""),
+                        str(item.get("player_id") or ""),
+                    ]
+                )
+            if key not in items_by_key:
+                stored += 1
+            items_by_key[key] = item
+        return stored
+
     for idx, category in enumerate(categories):
         if idx > 0 and spacing > 0:
             time.sleep(spacing)
-        params = {"limit": category_limit, "order_by": "updated"}
+        params = {"limit": category_limit}
         if category:
             params["category"] = category
         label = category or "all"
@@ -385,26 +449,40 @@ def fetch_draft_news(players: pd.DataFrame, config: dict) -> tuple[dict[str, dic
             batch = data.get("items") or []
             successful_calls += 1
             source_status[label] = {"ok": True, "items": int(len(batch))}
-            for item in batch:
-                if not isinstance(item, dict):
-                    continue
-                key = str(item.get("id") or "").strip()
-                if not key:
-                    key = "|".join(
-                        [
-                            str(item.get("created") or ""),
-                            str(item.get("title") or ""),
-                            str(item.get("player_id") or ""),
-                        ]
-                    )
-                items_by_key[key] = item
+            store_batch(batch)
         except Exception as exc:
             source_status[label] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    priority_ids = _priority_fp_ids(offense, priority_limit)
+    player_calls_ok = 0
+    player_calls_failed = 0
+    player_items = 0
+    for pid in priority_ids:
+        if spacing > 0:
+            time.sleep(spacing)
+        try:
+            data = _fp_get("nfl/news", {"fpid": pid, "limit": player_limit})
+            batch = data.get("items") or []
+            successful_calls += 1
+            player_calls_ok += 1
+            player_items += len(batch)
+            store_batch(batch)
+        except Exception:
+            player_calls_failed += 1
+
+    source_status["priority_player_news"] = {
+        "ok": player_calls_ok > 0 or not priority_ids,
+        "players_requested": int(len(priority_ids)),
+        "players_ok": int(player_calls_ok),
+        "players_failed": int(player_calls_failed),
+        "items": int(player_items),
+    }
 
     if not successful_calls:
         errors = "; ".join(
             f"{name}: {meta.get('error', 'failed')}"
             for name, meta in source_status.items()
+            if not meta.get("ok")
         )
         return {}, {"ok": False, "error": errors or "FantasyPros news calls failed."}
 
@@ -426,6 +504,8 @@ def fetch_draft_news(players: pd.DataFrame, config: dict) -> tuple[dict[str, dic
         "successful_calls": int(successful_calls),
         "unique_items_returned": int(len(items)),
         "category_limit": int(category_limit),
+        "priority_player_limit": int(priority_limit),
+        "player_news_limit": int(player_limit),
         "max_age_days": int(max_age_days),
         "tier_counts": tier_counts,
     }
