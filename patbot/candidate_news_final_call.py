@@ -16,6 +16,45 @@ def _roster_positions(engine, my_roster_ids: list[str]) -> list[str]:
     return frame.loc[frame["player_id"].isin(ids), "pos"].astype(str).tolist()
 
 
+def _has_live_fp_ids(engine, candidate_ids: list[str]) -> bool:
+    frame = engine.players.copy()
+    if "fp_player_id" not in frame.columns:
+        return False
+    frame["player_id"] = frame["player_id"].astype(str)
+    subset = frame[frame["player_id"].isin({str(x) for x in candidate_ids})]
+    if subset.empty:
+        return False
+    values = subset["fp_player_id"].astype(str).str.strip().str.lower()
+    return bool((~values.isin({"", "nan", "none", "null"})).any())
+
+
+def _call_original(
+    engine,
+    *,
+    current_pick: int,
+    drafted_ids: set[str],
+    my_roster_ids: list[str],
+    board: pd.DataFrame,
+    draft_history: list[dict] | None,
+    compare_fn,
+    stability_fn,
+):
+    kwargs = {}
+    if compare_fn is not None:
+        kwargs["compare_fn"] = compare_fn
+    if stability_fn is not None:
+        kwargs["stability_fn"] = stability_fn
+    return _ORIGINAL_RUN_FINAL_CALL(
+        engine,
+        current_pick=current_pick,
+        drafted_ids=drafted_ids,
+        my_roster_ids=my_roster_ids,
+        board=board,
+        draft_history=draft_history,
+        **kwargs,
+    )
+
+
 def _merge_meta(first: dict, second: dict | None = None) -> dict:
     second = second or {}
     return {
@@ -46,27 +85,35 @@ def run_final_call(
     the board with those risk signals. If the rebuild promotes a new candidate
     into the verification window, a second bounded pass checks only those newly
     promoted names. The underlying Final Call thresholds and simulation code are
-    unchanged.
+    unchanged. Synthetic/test boards without FantasyPros IDs bypass this layer
+    and preserve the original Final Call behavior exactly.
     """
     if board is None or board.empty:
-        kwargs = {}
-        if compare_fn is not None:
-            kwargs["compare_fn"] = compare_fn
-        if stability_fn is not None:
-            kwargs["stability_fn"] = stability_fn
-        return _ORIGINAL_RUN_FINAL_CALL(
+        return _call_original(
             engine,
             current_pick=current_pick,
             drafted_ids=drafted_ids,
             my_roster_ids=my_roster_ids,
             board=board,
             draft_history=draft_history,
-            **kwargs,
+            compare_fn=compare_fn,
+            stability_fn=stability_fn,
         )
 
     rcfg = engine.config.get("risk_model", {}) or {}
     verify_count = max(2, int(rcfg.get("candidate_news_verify_count", 8)))
     top_ids = board.head(verify_count)["player_id"].astype(str).tolist()
+    if not _has_live_fp_ids(engine, top_ids):
+        return _call_original(
+            engine,
+            current_pick=current_pick,
+            drafted_ids=drafted_ids,
+            my_roster_ids=my_roster_ids,
+            board=board,
+            draft_history=draft_history,
+            compare_fn=compare_fn,
+            stability_fn=stability_fn,
+        )
 
     first_signals, first_meta = verify_candidate_news(
         engine.players,
@@ -113,20 +160,15 @@ def run_final_call(
                     top_n=max(18, len(board)),
                 )
 
-    kwargs = {}
-    if compare_fn is not None:
-        kwargs["compare_fn"] = compare_fn
-    if stability_fn is not None:
-        kwargs["stability_fn"] = stability_fn
-
-    result = _ORIGINAL_RUN_FINAL_CALL(
+    result = _call_original(
         verified_engine,
         current_pick=current_pick,
         drafted_ids=drafted_ids,
         my_roster_ids=my_roster_ids,
         board=verified_board,
         draft_history=draft_history,
-        **kwargs,
+        compare_fn=compare_fn,
+        stability_fn=stability_fn,
     )
     if not isinstance(result, dict):
         return result
