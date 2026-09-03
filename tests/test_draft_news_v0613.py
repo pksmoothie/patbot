@@ -1,7 +1,11 @@
 import pandas as pd
 
 from patbot.draft_news import classify_draft_news, select_draft_news_signals
-from patbot.fast_risk import _draft_day_status_probability, _is_serious_sleeper_status
+from patbot.fast_risk import (
+    _draft_day_status_probability,
+    _is_serious_sleeper_status,
+    refresh_fast_risk,
+)
 
 
 def test_commissioners_exempt_list_is_red_and_confirmed_availability_risk():
@@ -84,3 +88,81 @@ def test_sleeper_exempt_or_suspended_status_is_hard_even_without_injury_row():
     assert status == "Commissioner Exempt"
     assert probability == 0.20
     assert source == "sleeper_hard"
+
+
+def test_fast_risk_applies_red_news_without_turning_yellow_into_red(monkeypatch):
+    players = pd.DataFrame(
+        [
+            {
+                "player_id": "s1",
+                "fp_player_id": "99",
+                "name": "Josh Jacobs",
+                "pos": "RB",
+                "team": "GB",
+                "injury_risk": 0.0,
+                "history_missed_rate": 0.0,
+                "history_signal_scale": 1.0,
+                "age_tail_bonus": 0.0,
+                "history_weighted_games": 17.0,
+                "history_seasons_observed": 6,
+            },
+            {
+                "player_id": "s2",
+                "fp_player_id": "100",
+                "name": "Monitor Player",
+                "pos": "WR",
+                "team": "X",
+                "injury_risk": 0.0,
+                "history_missed_rate": 0.0,
+                "history_signal_scale": 1.0,
+                "age_tail_bonus": 0.0,
+                "history_weighted_games": 17.0,
+                "history_seasons_observed": 6,
+            },
+        ]
+    )
+
+    monkeypatch.setattr(
+        "patbot.fast_risk._fetch_sleeper_current_status",
+        lambda _players: ({}, {"ok": True, "matched": 0}),
+    )
+    monkeypatch.setattr(
+        "patbot.fast_risk._fetch_injuries",
+        lambda _ids, _season, _config: ({}, {"ok": True, "matched": 0}),
+    )
+    monkeypatch.setattr(
+        "patbot.fast_risk.fetch_draft_news",
+        lambda _players, _config: (
+            {
+                "99": {
+                    **classify_draft_news(
+                        "Josh Jacobs placed on Commissioner's Exempt List and cannot practice or play"
+                    ),
+                    "title": "Josh Jacobs placed on Commissioner's Exempt List",
+                    "created": "2026-09-03T20:00:00Z",
+                },
+                "100": {
+                    **classify_draft_news(
+                        "Monitor Player charged with a misdemeanor; league has not imposed discipline"
+                    ),
+                    "title": "Monitor Player charged with misdemeanor",
+                    "created": "2026-09-03T20:00:00Z",
+                },
+            },
+            {"ok": True, "matched": 2},
+        ),
+    )
+
+    out, status = refresh_fast_risk(players, {"league": {"season": 2026}, "risk_model": {}})
+    jacobs = out[out["name"] == "Josh Jacobs"].iloc[0]
+    monitor = out[out["name"] == "Monitor Player"].iloc[0]
+
+    assert jacobs["fast_news_tier"] == "red"
+    assert float(jacobs["current_play_probability"]) == 0.20
+    assert float(jacobs["off_field_miss_probability"]) == 1.0
+    assert str(jacobs["fast_news_title"]).startswith("RED —")
+    assert monitor["fast_news_tier"] == "yellow"
+    assert float(monitor["current_play_probability"]) == 0.95
+    assert float(monitor["off_field_miss_probability"]) == 0.03
+    assert status["fast_risk_model"]["alert_tiers"]["red"] == 1
+    assert status["fast_risk_model"]["alert_tiers"]["yellow"] == 1
