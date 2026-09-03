@@ -1,6 +1,10 @@
 import pandas as pd
 
-from patbot.draft_news import classify_draft_news, select_draft_news_signals
+from patbot.draft_news import (
+    classify_draft_news,
+    fetch_draft_news,
+    select_draft_news_signals,
+)
 from patbot.fast_risk import (
     _draft_day_status_probability,
     _is_serious_sleeper_status,
@@ -158,11 +162,79 @@ def test_fast_risk_applies_red_news_without_turning_yellow_into_red(monkeypatch)
     monitor = out[out["name"] == "Monitor Player"].iloc[0]
 
     assert jacobs["fast_news_tier"] == "red"
+    assert jacobs["current_alert_tier"] == "red"
     assert float(jacobs["current_play_probability"]) == 0.20
     assert float(jacobs["off_field_miss_probability"]) == 1.0
     assert str(jacobs["fast_news_title"]).startswith("RED —")
     assert monitor["fast_news_tier"] == "yellow"
+    assert monitor["current_alert_tier"] == "yellow"
     assert float(monitor["current_play_probability"]) == 0.95
     assert float(monitor["off_field_miss_probability"]) == 0.03
     assert status["fast_risk_model"]["alert_tiers"]["red"] == 1
     assert status["fast_risk_model"]["alert_tiers"]["yellow"] == 1
+
+
+def test_priority_player_news_fpid_catches_jacobs_and_excludes_dst(monkeypatch):
+    players = pd.DataFrame(
+        [
+            {
+                "fp_player_id": "99",
+                "name": "Josh Jacobs",
+                "pos": "RB",
+                "proj_points": 245.0,
+                "adp": 35.0,
+                "expert_rank": 150.0,
+            },
+            {
+                "fp_player_id": "100",
+                "name": "New Orleans Saints",
+                "pos": "DEF",
+                "proj_points": 120.0,
+                "adp": 180.0,
+                "expert_rank": 180.0,
+            },
+            {
+                "fp_player_id": "101",
+                "name": "Healthy Receiver",
+                "pos": "WR",
+                "proj_points": 220.0,
+                "adp": 25.0,
+                "expert_rank": 25.0,
+            },
+        ]
+    )
+    calls = []
+
+    def fake_fp_get(_path, params):
+        calls.append(dict(params))
+        if str(params.get("fpid") or "") == "99":
+            return {
+                "items": [
+                    {
+                        "id": 1,
+                        "player_id": 99,
+                        "title": "Josh Jacobs placed on commissioner exempt list",
+                        "desc": "Jacobs cannot practice or play while on the list.",
+                    }
+                ]
+            }
+        return {"items": []}
+
+    monkeypatch.setattr("patbot.draft_news._fp_get", fake_fp_get)
+    signals, meta = fetch_draft_news(
+        players,
+        {
+            "risk_model": {
+                "fantasypros_request_spacing_seconds": 0,
+                "draft_news_priority_player_limit": 3,
+                "draft_news_player_limit": 5,
+                "draft_news_category_limit": 25,
+            }
+        },
+    )
+
+    assert signals["99"]["tier"] == "red"
+    assert any(str(call.get("fpid") or "") == "99" for call in calls)
+    assert not any(str(call.get("fpid") or "") == "100" for call in calls)
+    assert "100" not in signals
+    assert meta["source_status"]["priority_player_news"]["players_requested"] == 2
