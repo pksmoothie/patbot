@@ -4,6 +4,7 @@ from . import candidate_news as _candidate_news
 
 
 _ORIGINAL_OVERLAY_ROW = _candidate_news._overlay_row
+_ORIGINAL_CACHE_FRESH = _candidate_news._cache_fresh
 
 
 def _overlay_row(row, *, config: dict, direct_signal: dict | None = None) -> dict:
@@ -36,5 +37,14 @@ def _overlay_row(row, *, config: dict, direct_signal: dict | None = None) -> dic
     )
 
 
+def _cache_fresh(entry: dict, ttl_seconds: int, now) -> bool:
+    # A transient FantasyPros failure should be retried on the next PatBot
+    # decision rather than treated as a successful 10-minute cache entry.
+    if entry.get("error"):
+        return False
+    return _ORIGINAL_CACHE_FRESH(entry, ttl_seconds, now)
+
+
 def install_candidate_news_manual_guard() -> None:
     _candidate_news._overlay_row = _overlay_row
+    _candidate_news._cache_fresh = _cache_fresh
