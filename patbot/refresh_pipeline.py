@@ -105,6 +105,8 @@ def _apply_draft_night_backstops(csv_path: str | Path, cfg: dict) -> None:
     from .candidate_news import apply_manual_risk_overrides, clear_candidate_news_cache
 
     path = Path(csv_path)
+    if not path.exists():
+        return
     frame = pd.read_csv(path)
     frame = apply_manual_risk_overrides(frame, cfg)
     frame.to_csv(path, index=False)
