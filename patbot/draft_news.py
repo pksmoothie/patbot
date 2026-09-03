@@ -27,8 +27,19 @@ RESOLVED_NEWS_TERMS = (
     "removed from the injury report",
     "off the injury report",
     "no injury designation",
-    "expected to play",
-    "will play",
+    "expected to play week 1",
+    "expected to play sunday",
+    "expected to play monday",
+    "expected to play thursday",
+    "will play week 1",
+    "will play sunday",
+    "will play monday",
+    "will play thursday",
+    "on track to play week 1",
+    "no suspension expected",
+    "not expected to be suspended",
+    "no discipline expected",
+    "will not be suspended",
     "good to go",
 )
 
@@ -147,7 +158,9 @@ def classify_draft_news(text: str) -> dict:
         return _signal("none", "none", 1.0, 0.0, 0, "irrelevant")
 
     # Explicit resolution phrases come first so "activated from PUP" does not
-    # get misclassified merely because the sentence also contains "PUP".
+    # get misclassified merely because the sentence also contains "PUP". Keep
+    # these phrases specific: "hope he can play sometime this season" is not a
+    # resolution of a current exempt-list or injury issue.
     if any(term in lower for term in RESOLVED_NEWS_TERMS):
         return _signal("green", "none", 1.0, 0.0, 0, "resolved")
 
