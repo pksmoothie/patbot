@@ -174,7 +174,7 @@ def test_fast_risk_applies_red_news_without_turning_yellow_into_red(monkeypatch)
     assert status["fast_risk_model"]["alert_tiers"]["yellow"] == 1
 
 
-def test_priority_player_news_fpid_catches_jacobs_and_excludes_dst(monkeypatch):
+def test_fast_news_uses_broad_categories_without_fpid_calls_and_excludes_dst(monkeypatch):
     players = pd.DataFrame(
         [
             {
@@ -207,7 +207,7 @@ def test_priority_player_news_fpid_catches_jacobs_and_excludes_dst(monkeypatch):
 
     def fake_fp_get(_path, params):
         calls.append(dict(params))
-        if str(params.get("fpid") or "") == "99":
+        if params.get("category") is None:
             return {
                 "items": [
                     {
@@ -215,26 +215,31 @@ def test_priority_player_news_fpid_catches_jacobs_and_excludes_dst(monkeypatch):
                         "player_id": 99,
                         "title": "Josh Jacobs placed on commissioner exempt list",
                         "desc": "Jacobs cannot practice or play while on the list.",
-                    }
+                        "created": "2026-09-03T20:00:00Z",
+                    },
+                    {
+                        "id": 2,
+                        "player_id": 100,
+                        "title": "Saints waive reserve running back",
+                        "created": "2026-09-03T20:00:00Z",
+                    },
                 ]
             }
         return {"items": []}
 
-    monkeypatch.setattr("patbot.draft_news._fp_get", fake_fp_get)
+    monkeypatch.setattr("patbot.draft_news_hardening._fp_get", fake_fp_get)
     signals, meta = fetch_draft_news(
         players,
         {
             "risk_model": {
                 "fantasypros_request_spacing_seconds": 0,
-                "draft_news_priority_player_limit": 3,
-                "draft_news_player_limit": 5,
                 "draft_news_category_limit": 25,
             }
         },
     )
 
     assert signals["99"]["tier"] == "red"
-    assert any(str(call.get("fpid") or "") == "99" for call in calls)
-    assert not any(str(call.get("fpid") or "") == "100" for call in calls)
+    assert not any("fpid" in call for call in calls)
     assert "100" not in signals
-    assert meta["source_status"]["priority_player_news"]["players_requested"] == 2
+    assert meta["successful_calls"] == 5
+    assert "priority_player_news" not in meta["source_status"]
