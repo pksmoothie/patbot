@@ -46,9 +46,9 @@ def run_fast_refresh(
     new_risk = pd.to_numeric(after.get("risk_score"), errors="coerce")
     delta = new_risk - old_risk.reindex(after.index)
     cols = [
-        "name", "pos", "team", "current_injury_status", "current_play_probability",
-        "current_status_source", "current_status_material", "off_field_risk_level",
-        "fast_news_title", "risk_score",
+        "name", "pos", "team", "current_alert_tier", "current_injury_status",
+        "current_play_probability", "current_status_source", "current_status_material",
+        "off_field_risk_level", "fast_news_title", "risk_score",
     ]
     cols = [c for c in cols if c in after.columns]
     report = after[cols].copy()
@@ -59,6 +59,19 @@ def run_fast_refresh(
     else:
         alerts = report.iloc[0:0].copy()
     if not alerts.empty:
-        alerts = alerts.sort_values(["risk_score", "risk_delta"], ascending=[False, False])
+        severity = {"red": 0, "orange": 1, "yellow": 2, "none": 3}
+        if "current_alert_tier" in alerts.columns:
+            alerts["_tier_order"] = (
+                alerts["current_alert_tier"].fillna("none").astype(str).str.lower().map(severity).fillna(3)
+            )
+        else:
+            alerts["_tier_order"] = 3
+        alerts = (
+            alerts.sort_values(
+                ["_tier_order", "risk_score", "risk_delta"],
+                ascending=[True, False, False],
+            )
+            .drop(columns=["_tier_order"])
+        )
 
     return after, status, alerts, elapsed
