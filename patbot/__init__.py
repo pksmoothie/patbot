@@ -8,6 +8,7 @@ from .yahoo_room_behavior import install_yahoo_room_behavior_patch
 from .team_concentration import install_team_concentration_patch
 from .decision_strategy import install_decision_strategy_patch
 from .opponent_availability import install_opponent_availability_patch
+from .draft_news_hardening import install_draft_news_hardening_patch
 
 install_owner_history_patch()
 install_roster_strategy_patch()
@@ -17,3 +18,4 @@ install_yahoo_room_behavior_patch()
 install_team_concentration_patch()
 install_decision_strategy_patch()
 install_opponent_availability_patch()
+install_draft_news_hardening_patch()
