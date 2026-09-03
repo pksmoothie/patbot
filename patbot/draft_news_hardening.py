@@ -6,11 +6,10 @@ import pandas as pd
 
 from . import draft_news as _draft_news
 from . import fast_risk as _fast_risk
-from .market import _fp_get, _known_name_match, normalize_name
+from .market import _fp_get
 
 
 _ORIGINAL_CLASSIFY = _draft_news.classify_draft_news
-_ORIGINAL_FETCH = _draft_news.fetch_draft_news
 
 _NEGATED_HARD_PHRASES = (
     "wasn't placed on ir",
@@ -49,89 +48,14 @@ def _clean_fp_id(value) -> str:
     return _draft_news._clean_fp_id(value)
 
 
-def _timestamp(value) -> pd.Timestamp:
-    try:
-        ts = pd.Timestamp(value)
-        if ts.tzinfo is None:
-            ts = ts.tz_localize("UTC")
-        else:
-            ts = ts.tz_convert("UTC")
-        return ts
-    except Exception:
-        return pd.Timestamp("1970-01-01", tz="UTC")
-
-
-def _newest_relevant_by_player(
-    items: list[dict],
-    *,
-    fp_ids: set[str],
-    fp_id_to_name: dict[str, str],
-    max_age_days: int,
-) -> dict[str, dict]:
-    """Return newest RED/ORANGE/YELLOW/GREEN signal for each known player."""
-    known_ids = {_clean_fp_id(x) for x in fp_ids}
-    known_ids.discard("")
-    normalized_name_to_id = {
-        normalize_name(name): pid
-        for pid, name in fp_id_to_name.items()
-        if pid in known_ids and normalize_name(name)
-    }
-    now = pd.Timestamp.now(tz="UTC")
-
-    recent: list[tuple[pd.Timestamp, dict]] = []
-    for item in items or []:
-        if not isinstance(item, dict):
-            continue
-        raw_ts = item.get("updated") or item.get("created") or item.get("published")
-        ts = _timestamp(raw_ts)
-        if raw_ts:
-            age_days = (now - ts).total_seconds() / 86400.0
-            if age_days > max(1, int(max_age_days)):
-                continue
-        recent.append((ts, item))
-    recent.sort(key=lambda pair: pair[0], reverse=True)
-
-    chosen: dict[str, dict] = {}
-    for ts, item in recent:
-        text = " ".join(
-            [
-                str(item.get("title") or ""),
-                str(item.get("desc") or ""),
-                str(item.get("impact") or ""),
-            ]
-        ).strip()
-        signal = classify_draft_news(text)
-        if signal.get("tier") == "none":
-            continue
-
-        pid = _clean_fp_id(item.get("player_id"))
-        matched_by = "player_id"
-        if pid not in known_ids:
-            pid = _known_name_match(text, normalized_name_to_id) or ""
-            matched_by = "player_name"
-        if pid not in known_ids or pid in chosen:
-            continue
-
-        chosen[pid] = {
-            **signal,
-            "title": str(item.get("title") or ""),
-            "created": str(item.get("created") or item.get("updated") or ""),
-            "matched_by": matched_by,
-            "_ts": ts,
-        }
-    return chosen
-
-
 def fetch_draft_news(players: pd.DataFrame, config: dict) -> tuple[dict[str, dict], dict]:
-    """Add one wide league news pull to the existing bounded fast-refresh scan.
+    """Keep Fast Refresh league-wide and cheap; direct checks happen in Final Call.
 
-    FantasyPros documents `limit` on /nfl/news. A 500-item all-news request is
-    cheap in wall-clock terms (one rate-limited request) and protects PatBot from
-    missing a draft-relevant player whose market rank already collapsed enough
-    to fall outside the player-specific priority set.
+    FantasyPros' broad news endpoint is useful for fresh league-wide alerts but
+    is not a dependable archive. Fast Refresh therefore scans a bounded set of
+    current categories only. Player-specific fpid lookups are reserved for the
+    live Final Call candidate set, where completeness actually changes the pick.
     """
-    existing, meta = _ORIGINAL_FETCH(players, config)
-
     offense = players[
         players["pos"].astype(str).str.upper().isin(_draft_news.OFFENSE_POSITIONS)
     ].copy()
@@ -141,70 +65,79 @@ def fetch_draft_news(players: pd.DataFrame, config: dict) -> tuple[dict[str, dic
         name = str(row.get("name") or "").strip()
         if pid and name:
             fp_id_to_name[pid] = name
+
     fp_ids = set(fp_id_to_name)
     if not fp_ids:
-        return existing, meta
+        return {}, {"ok": False, "error": "No cached FantasyPros offensive player IDs in snapshot."}
 
-    rcfg = config.get("risk_model", {})
-    spacing = float(rcfg.get("fantasypros_request_spacing_seconds", 1.05))
-    if spacing > 0:
-        time.sleep(spacing)
-    wide_limit = max(100, int(rcfg.get("draft_news_wide_limit", 500)))
+    rcfg = config.get("risk_model", {}) or {}
+    spacing = max(0.0, float(rcfg.get("fantasypros_request_spacing_seconds", 1.05)))
+    category_limit = max(25, int(rcfg.get("draft_news_category_limit", 100)))
     max_age_days = max(1, int(rcfg.get("draft_news_max_age_days", 14)))
+    categories = [None, "injury", "transaction", "rumor", "breaking"]
 
-    try:
-        data = _fp_get("nfl/news", {"limit": wide_limit})
-        items = data.get("items") or []
-    except Exception as exc:
-        out_meta = dict(meta or {})
-        out_meta["wide_news"] = {
-            "ok": False,
-            "error": f"{type(exc).__name__}: {exc}",
-            "requested_limit": int(wide_limit),
-        }
-        return existing, out_meta
+    items_by_key: dict[str, dict] = {}
+    source_status = {}
+    successful_calls = 0
 
-    wide = _newest_relevant_by_player(
+    for idx, category in enumerate(categories):
+        if idx > 0 and spacing > 0:
+            time.sleep(spacing)
+        params = {"limit": category_limit}
+        if category:
+            params["category"] = category
+        label = category or "all"
+        try:
+            data = _fp_get("nfl/news", params)
+            batch = data.get("items") or []
+            successful_calls += 1
+            source_status[label] = {"ok": True, "items": int(len(batch))}
+            for item in batch:
+                if not isinstance(item, dict):
+                    continue
+                key = str(item.get("id") or "").strip()
+                if not key:
+                    key = "|".join(
+                        [
+                            str(item.get("created") or item.get("updated") or ""),
+                            str(item.get("title") or ""),
+                            str(item.get("player_id") or ""),
+                        ]
+                    )
+                items_by_key[key] = item
+        except Exception as exc:
+            source_status[label] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    if not successful_calls:
+        errors = "; ".join(
+            f"{name}: {meta.get('error', 'failed')}"
+            for name, meta in source_status.items()
+        )
+        return {}, {"ok": False, "error": errors or "FantasyPros news calls failed."}
+
+    items = list(items_by_key.values())
+    signals, meta = _draft_news.select_draft_news_signals(
         items,
         fp_ids=fp_ids,
         fp_id_to_name=fp_id_to_name,
         max_age_days=max_age_days,
     )
-
-    merged = dict(existing or {})
-    resolved = 0
-    overrides = 0
-    for pid, signal in wide.items():
-        if signal.get("resolved"):
-            prior = merged.get(pid)
-            if prior is not None and signal["_ts"] >= _timestamp(prior.get("created")):
-                merged.pop(pid, None)
-                resolved += 1
-            continue
-
-        prior = merged.get(pid)
-        if prior is None or signal["_ts"] >= _timestamp(prior.get("created")):
-            cleaned = {k: v for k, v in signal.items() if k != "_ts"}
-            merged[pid] = cleaned
-            overrides += 1
-
-    out_meta = dict(meta or {})
-    out_meta["wide_news"] = {
-        "ok": True,
-        "requested_limit": int(wide_limit),
-        "items": int(len(items)),
-        "relevant_players": int(len(wide)),
-        "active_overrides": int(overrides),
-        "resolved_overrides": int(resolved),
-    }
     tier_counts = {"red": 0, "orange": 0, "yellow": 0}
-    for signal in merged.values():
-        tier = str(signal.get("tier") or "")
+    for signal in signals.values():
+        tier = str(signal.get("tier") or "none")
         if tier in tier_counts:
             tier_counts[tier] += 1
-    out_meta["tier_counts"] = tier_counts
-    out_meta["matched"] = int(len(merged))
-    return merged, out_meta
+
+    return signals, {
+        **meta,
+        "source_status": source_status,
+        "successful_calls": int(successful_calls),
+        "unique_items_returned": int(len(items)),
+        "category_limit": int(category_limit),
+        "max_age_days": int(max_age_days),
+        "tier_counts": tier_counts,
+        "note": "Broad current-news scan only; player-specific fpid verification is deferred to live Final Call candidates.",
+    }
 
 
 def install_draft_news_hardening_patch() -> None:
