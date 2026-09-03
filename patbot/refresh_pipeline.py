@@ -100,6 +100,17 @@ def refresh_yahoo_room_signal(
     return meta
 
 
+def _apply_draft_night_backstops(csv_path: str | Path, cfg: dict) -> None:
+    """Persist short-lived manual availability backstops after a slow refresh."""
+    from .candidate_news import apply_manual_risk_overrides, clear_candidate_news_cache
+
+    path = Path(csv_path)
+    frame = pd.read_csv(path)
+    frame = apply_manual_risk_overrides(frame, cfg)
+    frame.to_csv(path, index=False)
+    clear_candidate_news_cache()
+
+
 def run_full_refresh(
     cfg: dict,
     csv_path: str | Path = "data/players_2026_live.csv",
@@ -117,4 +128,5 @@ def run_full_refresh(
         cfg,
         cache_path=yahoo_cache_path,
     )
+    _apply_draft_night_backstops(csv_path, cfg)
     return Path(csv_path), Path(meta_path), meta
