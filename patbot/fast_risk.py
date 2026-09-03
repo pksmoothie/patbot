@@ -6,9 +6,9 @@ import time
 import numpy as np
 import pandas as pd
 
+from .draft_news import fetch_draft_news
 from .risk import (
     _fetch_injuries,
-    _fetch_risk_news,
     _override_is_active,
     _safe_float,
     _status_probability,
@@ -79,7 +79,18 @@ def _history_components(row: pd.Series) -> tuple[float, float, float]:
 
 def _is_serious_sleeper_status(status: str | None) -> bool:
     text = _clean_status(status).lower()
-    return any(term in text for term in ("out", "ir", "pup", "nfi", "doubt"))
+    return any(
+        term in text
+        for term in (
+            "out",
+            "ir",
+            "pup",
+            "nfi",
+            "doubt",
+            "suspend",
+            "exempt",
+        )
+    )
 
 
 def _draft_day_status_probability(
@@ -88,34 +99,47 @@ def _draft_day_status_probability(
 ) -> tuple[str, float, str]:
     """Resolve current play probability for draft-day use.
 
-    FantasyPros is the corroborating injury source. If it has a current row, use
-    its explicit probability/status logic. Sleeper alone is still authoritative
-    for hard statuses such as PUP/IR/Out/Doubtful, but uncorroborated soft labels
-    such as Questionable/Probable are informational only and add zero draft-day
-    risk penalty.
+    Hard Sleeper roster/injury statuses are authoritative even when the
+    FantasyPros injury endpoint is silent. FantasyPros remains the corroborating
+    source for softer injury labels. Uncorroborated Sleeper Questionable/Probable
+    labels remain informational only.
     """
     cleaned_sleeper = _clean_status(sleeper_status)
+    lower = cleaned_sleeper.lower()
+
+    if lower and any(term in lower for term in ("out", "ir", "pup", "nfi", "suspend", "exempt")):
+        return cleaned_sleeper, 0.20, "sleeper_hard"
+
     if fantasypros_item:
         status, probability = _status_probability(fantasypros_item, cleaned_sleeper)
         return _clean_status(status), probability, "fantasypros"
 
     status = cleaned_sleeper
-    lower = status.lower()
     if not lower:
         return "", 1.0, "none"
-    if "out" in lower or "ir" in lower or "pup" in lower or "nfi" in lower:
-        return status, 0.20, "sleeper_hard"
     if "doubt" in lower:
         return status, 0.50, "sleeper_hard"
     return status, 1.0, "sleeper_ignored"
 
 
-def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame, dict]:
-    """Refresh only current injury/news inputs while preserving slow history work.
+def _tier_from_probability(play_probability: float) -> str:
+    p = max(0.0, min(1.0, float(play_probability)))
+    if p <= 0.35:
+        return "red"
+    if p <= 0.75:
+        return "orange"
+    if p < 0.98:
+        return "yellow"
+    return "none"
 
-    This is the draft-day layer: one Sleeper player-status request plus the
-    FantasyPros current injuries and recent-news requests. Six-year availability
-    history, projections, ECR/ADP and Athletic data are intentionally untouched.
+
+def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame, dict]:
+    """Refresh current draft-day injury, roster-status and player-news signals.
+
+    The fast layer deliberately collects news broadly but classifies narrowly:
+    RED = confirmed unavailability/league action; ORANGE = meaningful near-term
+    uncertainty; YELLOW = awareness-only; GREEN = resolved and suppressed.
+    Slow history, projections, ECR/ADP and Athletic inputs are untouched.
     """
     started = time.perf_counter()
     out = players.copy()
@@ -128,26 +152,18 @@ def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame
     fp_ids.discard("")
     if fp_ids:
         injuries, injury_meta = _fetch_injuries(fp_ids, season, config)
-        news, news_meta = _fetch_risk_news(fp_ids, config)
+        news, news_meta = fetch_draft_news(out, config)
     else:
         injuries, injury_meta = {}, {"ok": False, "error": "No cached FantasyPros player IDs in snapshot."}
         news, news_meta = {}, {"ok": False, "error": "No cached FantasyPros player IDs in snapshot."}
 
-    level_prob = {
-        "none": 0.0,
-        "medium": float(rcfg.get("news_medium_event_probability", 0.05)),
-        "high": float(rcfg.get("news_high_event_probability", 0.18)),
-    }
-    level_max = {
-        "none": 0,
-        "medium": int(rcfg.get("news_medium_max_missed_games", 3)),
-        "high": int(rcfg.get("news_high_max_missed_games", 6)),
-    }
     overrides = config.get("risk_overrides", {}) or {}
     refreshed_at = datetime.now(timezone.utc).isoformat()
 
     rows = []
     alerts = 0
+    tier_counts = {"red": 0, "orange": 0, "yellow": 0}
+
     for _, row in out.iterrows():
         name = str(row.get("name") or "")
         sleeper_id = _norm_id(row.get("player_id"))
@@ -156,18 +172,32 @@ def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame
         sleeper_injury_status = _clean_status(smeta.get("injury_status"))
         if not sleeper_injury_status:
             sleeper_injury_status = _clean_status(row.get("injury_status"))
+        sleeper_roster_status = _clean_status(smeta.get("status"))
+
+        # Sleeper's broad roster status can carry suspension/exempt information
+        # that is not represented in injury_status.
+        sleeper_signal_status = sleeper_injury_status
+        if _is_serious_sleeper_status(sleeper_roster_status):
+            sleeper_signal_status = sleeper_roster_status
 
         injury_item = injuries.get(fp_id)
         current_status, play_prob, status_source = _draft_day_status_probability(
             injury_item,
-            sleeper_injury_status,
+            sleeper_signal_status,
         )
-        current_risk = max(0.0, 1.0 - play_prob)
 
         news_item = news.get(fp_id, {})
+        news_tier = str(news_item.get("tier", "none") or "none").lower()
+        news_cap = _safe_float(news_item.get("play_probability_cap"), 1.0)
+        if news_tier in {"red", "orange", "yellow"} and news_cap < play_prob:
+            play_prob = max(0.0, min(1.0, news_cap))
+            if status_source in {"none", "sleeper_ignored"}:
+                status_source = f"news_{news_tier}"
+        current_risk = max(0.0, 1.0 - play_prob)
+
         news_level = str(news_item.get("level", "none") or "none")
-        off_prob = level_prob.get(news_level, 0.0)
-        off_max = level_max.get(news_level, 0)
+        off_prob = max(0.0, _safe_float(news_item.get("off_field_event_probability"), 0.0))
+        off_max = max(0, int(_safe_float(news_item.get("off_field_max_missed_games"), 0.0)))
 
         manual_note = ""
         override = overrides.get(name) or {}
@@ -218,22 +248,48 @@ def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame
             else:
                 notes.append(f"{current_status} ({play_prob:.0%} play probability; {status_source})")
         if news_item.get("title"):
-            notes.append(f"news: {news_item['title']}")
+            notes.append(f"{news_tier.upper()} news: {news_item['title']}")
         if manual_note:
             notes.append(manual_note)
 
+        status_material = (
+            _is_serious_sleeper_status(current_status)
+            or (
+                status_source == "fantasypros"
+                and (bool(current_status) or play_prob < 0.98)
+            )
+        )
         material_current = (
-            status_source == "fantasypros"
-            or _is_serious_sleeper_status(current_status)
-            or news_level != "none"
+            status_material
+            or bool(news_item.get("material"))
             or off_prob > 0
         )
+
+        alert_tier = news_tier if news_tier in tier_counts else "none"
+        if alert_tier == "none" and status_material:
+            alert_tier = _tier_from_probability(play_prob)
+        if alert_tier == "none" and off_prob > 0:
+            alert_tier = "yellow"
+
         if material_current:
             alerts += 1
+            if alert_tier in tier_counts:
+                tier_counts[alert_tier] += 1
+
+        raw_news_title = str(news_item.get("title") or "").strip()
+        if raw_news_title and alert_tier in tier_counts:
+            display_news = f"{alert_tier.upper()} — {raw_news_title}"
+        elif material_current and alert_tier in tier_counts and current_status:
+            display_news = f"{alert_tier.upper()} — structured status: {current_status}"
+        elif manual_note and alert_tier in tier_counts:
+            display_news = f"{alert_tier.upper()} — manual risk monitor"
+        else:
+            display_news = raw_news_title
 
         rows.append({
             "name": name,
             "injury_status": sleeper_injury_status,
+            "sleeper_roster_status": sleeper_roster_status,
             "sleeper_current_injury_risk": round(float(sleeper_risk), 4),
             "current_injury_status": current_status,
             "current_play_probability": round(float(play_prob), 4),
@@ -244,7 +300,10 @@ def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame
             "off_field_risk_level": news_level,
             "off_field_miss_probability": round(float(off_prob), 4),
             "off_field_max_missed_games": int(off_max),
-            "fast_news_title": str(news_item.get("title") or ""),
+            "fast_news_tier": alert_tier,
+            "fast_news_reason": str(news_item.get("reason") or ""),
+            "fast_news_created": str(news_item.get("created") or ""),
+            "fast_news_title": display_news,
             "risk_score": round(float(risk_score), 4),
             "injury_risk": round(float(risk_score), 4),
             "risk_note": " • ".join(notes),
@@ -260,16 +319,18 @@ def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame
     status = {
         "sleeper_current_status": sleeper_meta,
         "fantasypros_current_injuries": injury_meta,
-        "fantasypros_recent_risk_news": news_meta,
+        "fantasypros_draft_news": news_meta,
         "fast_risk_model": {
             "ok": True,
             "matched": int(len(out)),
             "alerts": int(alerts),
+            "alert_tiers": tier_counts,
             "elapsed_seconds": round(float(elapsed), 2),
             "refreshed_at_utc": refreshed_at,
             "note": (
-                "Fast refresh reused cached history/projections and updated only current Sleeper status plus FantasyPros injuries/news. "
-                "Uncorroborated Sleeper soft labels are informational only and add zero draft-day risk penalty."
+                "Fast refresh reuses cached history/projections, checks Sleeper injury plus broad roster status, "
+                "and scans a wider recent FantasyPros news window. News is classified RED/ORANGE/YELLOW; "
+                "newer GREEN resolution signals suppress stale negative stories."
             ),
         },
     }
