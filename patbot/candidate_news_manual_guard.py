@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from . import candidate_news as _candidate_news
+from .candidate_news_dtype_guard import install_candidate_news_dtype_guard
 
 
 _ORIGINAL_OVERLAY_ROW = _candidate_news._overlay_row
@@ -48,3 +49,4 @@ def _cache_fresh(entry: dict, ttl_seconds: int, now) -> bool:
 def install_candidate_news_manual_guard() -> None:
     _candidate_news._overlay_row = _overlay_row
     _candidate_news._cache_fresh = _cache_fresh
+    install_candidate_news_dtype_guard()
