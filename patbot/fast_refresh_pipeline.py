@@ -6,6 +6,7 @@ import time
 
 import pandas as pd
 
+from .candidate_news import apply_manual_risk_overrides, clear_candidate_news_cache
 from .fast_risk import refresh_fast_risk
 
 
@@ -28,6 +29,13 @@ def run_fast_refresh(
     old_risk = pd.to_numeric(before.get("risk_score"), errors="coerce")
     started = time.perf_counter()
     after, status = refresh_fast_risk(before, cfg)
+
+    # Dated draft-night backstops are applied after the feed refresh so a known
+    # hard availability state cannot disappear merely because a broad news feed
+    # omits the player. Final Call's direct player check can still supersede a
+    # backstop when it sees a newer explicit GREEN resolution.
+    after = apply_manual_risk_overrides(after, cfg)
+    clear_candidate_news_cache()
     after.to_csv(csv_path, index=False)
 
     meta = {}
