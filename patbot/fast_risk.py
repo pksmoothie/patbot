@@ -279,10 +279,10 @@ def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame
         raw_news_title = str(news_item.get("title") or "").strip()
         if raw_news_title and alert_tier in tier_counts:
             display_news = f"{alert_tier.upper()} — {raw_news_title}"
-        elif material_current and alert_tier in tier_counts and current_status:
-            display_news = f"{alert_tier.upper()} — structured status: {current_status}"
         elif manual_note and alert_tier in tier_counts:
             display_news = f"{alert_tier.upper()} — manual risk monitor"
+        elif material_current and alert_tier in tier_counts and current_status:
+            display_news = f"{alert_tier.upper()} — structured status: {current_status}"
         else:
             display_news = raw_news_title
 
@@ -295,6 +295,7 @@ def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame
             "current_play_probability": round(float(play_prob), 4),
             "current_status_source": status_source,
             "current_status_material": bool(material_current),
+            "current_alert_tier": alert_tier,
             "catastrophic_miss_probability": round(float(cat_prob), 4),
             "minor_miss_lambda": round(float(minor_lambda), 4),
             "off_field_risk_level": news_level,
@@ -329,8 +330,8 @@ def refresh_fast_risk(players: pd.DataFrame, config: dict) -> tuple[pd.DataFrame
             "refreshed_at_utc": refreshed_at,
             "note": (
                 "Fast refresh reuses cached history/projections, checks Sleeper injury plus broad roster status, "
-                "and scans a wider recent FantasyPros news window. News is classified RED/ORANGE/YELLOW; "
-                "newer GREEN resolution signals suppress stale negative stories."
+                "and combines broad FantasyPros news with player-specific checks for draft-critical offense. "
+                "News is classified RED/ORANGE/YELLOW; newer GREEN resolution signals suppress stale negatives."
             ),
         },
     }
