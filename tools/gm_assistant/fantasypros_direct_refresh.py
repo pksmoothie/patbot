@@ -15,6 +15,9 @@ import refresh
 from gm_snapshot import build_snapshot, decode, persist, utc_now
 
 
+MAX_ATTEMPTS = 3
+
+
 def raw_result(result):
     """Convert the SDK CallToolResult to JSON-compatible data without summarizing it."""
     return json.loads(result.model_dump_json(by_alias=True))
@@ -33,7 +36,7 @@ async def collect(session: ClientSession, folder: Path, item: dict):
     return payload["raw"]
 
 
-async def run_direct() -> Path:
+async def run_direct_once() -> Path:
     folder = refresh.prepare_run()
     print(f"Collecting directly from FantasyPros MCP. Run evidence: {folder}", flush=True)
 
@@ -75,6 +78,24 @@ async def run_direct() -> Path:
     destination = persist(snapshot)
     print(f"Published {snapshot['refresh_status']} snapshot: {destination}")
     return destination
+
+
+async def run_direct() -> Path:
+    """Retry a dropped MCP transport automatically; validation/data failures still fail closed."""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            return await run_direct_once()
+        except ExceptionGroup:
+            if attempt >= MAX_ATTEMPTS:
+                raise
+            print(
+                f"FantasyPros MCP connection ended unexpectedly; retrying automatically "
+                f"({attempt + 1}/{MAX_ATTEMPTS})...",
+                file=sys.stderr,
+                flush=True,
+            )
+            await asyncio.sleep(2)
+    raise RuntimeError("unreachable")
 
 
 def main() -> int:
