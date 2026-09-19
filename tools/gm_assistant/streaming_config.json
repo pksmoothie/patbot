@@ -1,0 +1,21 @@
+{
+  "weights": [0.60, 0.25, 0.15],
+  "current_score_edge": 1.25,
+  "projection_edge": 1.0,
+  "material_projection_edge": 2.5,
+  "max_current_sacrifice": 0.5,
+  "composite_edge": 0.5,
+  "dst_matchup_weight": 1.0,
+  "k_matchup_weight": 0.35,
+  "ecr_weight": 0.5,
+  "future_dst_base": 6.0,
+  "future_k_base": 7.0,
+  "future_dst_matchup_weight": 1.5,
+  "future_k_matchup_weight": 0.75,
+  "stash_next_stars": 4.5,
+  "stash_future_stars": 4.2,
+  "stash_future_edge": 2.0,
+  "stash_net_edge": 1.0,
+  "bench_cost_weight": 0.25,
+  "max_defenses": 2
+}

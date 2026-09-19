@@ -1,0 +1,95 @@
+{
+  "scoring": {
+    "pass_completion": 0.25,
+    "pass_yards_per_point": 25,
+    "pass_td": 4,
+    "interception": -2,
+    "pass_yard_bonuses": [
+      {
+        "threshold": 320,
+        "points": 1
+      },
+      {
+        "threshold": 350,
+        "points": 3
+      },
+      {
+        "threshold": 380,
+        "points": 1
+      }
+    ],
+    "rush_yards_per_point": 10,
+    "rush_td": 6,
+    "rush_yard_bonuses": [
+      {
+        "threshold": 130,
+        "points": 1
+      },
+      {
+        "threshold": 155,
+        "points": 3
+      },
+      {
+        "threshold": 180,
+        "points": 1
+      }
+    ],
+    "reception": 1.0,
+    "rec_yards_per_point": 10,
+    "rec_td": 6,
+    "rec_yard_bonuses": [
+      {
+        "threshold": 140,
+        "points": 1
+      },
+      {
+        "threshold": 165,
+        "points": 3
+      },
+      {
+        "threshold": 190,
+        "points": 1
+      }
+    ],
+    "return_td": 6,
+    "two_point_conversion": 2,
+    "fumble_lost": -2,
+    "offensive_fumble_return_td": 6
+  },
+  "kicker_scoring": {
+    "field_goal_made": {
+      "0_19": 3,
+      "20_29": 3,
+      "30_39": 3,
+      "40_49": 4,
+      "50_plus": 5
+    },
+    "field_goal_missed": {
+      "0_19": -1,
+      "20_29": -1,
+      "30_39": -1,
+      "40_49": -1
+    },
+    "extra_point_made": 1,
+    "extra_point_missed": -1
+  },
+  "defense_scoring": {
+    "sack": 1,
+    "interception": 2,
+    "fumble_recovery": 2,
+    "touchdown": 6,
+    "safety": 2,
+    "blocked_kick": 2,
+    "extra_point_returned": 2,
+    "points_allowed": {
+      "0": 10,
+      "1_6": 7,
+      "7_13": 4,
+      "14_20": 1,
+      "21_27": 0,
+      "28_34": -1,
+      "35_plus": -4
+    }
+  },
+  "provenance": "Copied from config/league.yaml for GM v0.2; local custom rules take precedence over incomplete FantasyPros settings. No draft model parameters used."
+}

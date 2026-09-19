@@ -6,6 +6,12 @@ __pycache__/
 
 # Secrets
 .env
+.env.local
+.env.*.local
+# Yahoo OAuth: never persist these in version control.
+**/yahoo_tokens*.json
+**/yahoo_connection_test.json
+**/.yahoo.lock
 .streamlit/secrets.toml
 
 # Generated live-data snapshots

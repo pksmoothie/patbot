@@ -1,0 +1,182 @@
+{
+  "season": 2026,
+  "season_type": "REG",
+  "verified_at": "2026-09-18T01:04:01.463742+00:00",
+  "notes": "Weeks 2 and 3 verified against official NFL dated weekly schedules on September 17 Eastern.",
+  "weeks": [
+    {
+      "week": 2,
+      "complete": true,
+      "source_url": "https://www.nfl.com/schedules/2026/by-week/week-2",
+      "games": [
+        {
+          "away": "DET",
+          "home": "BUF",
+          "kickoff": "2026-09-17T20:15:00-04:00"
+        },
+        {
+          "away": "CAR",
+          "home": "ATL",
+          "kickoff": "2026-09-20T13:00:00-04:00"
+        },
+        {
+          "away": "NO",
+          "home": "BAL",
+          "kickoff": "2026-09-20T13:00:00-04:00"
+        },
+        {
+          "away": "MIN",
+          "home": "CHI",
+          "kickoff": "2026-09-20T13:00:00-04:00"
+        },
+        {
+          "away": "CIN",
+          "home": "HOU",
+          "kickoff": "2026-09-20T13:00:00-04:00"
+        },
+        {
+          "away": "PIT",
+          "home": "NE",
+          "kickoff": "2026-09-20T13:00:00-04:00"
+        },
+        {
+          "away": "GB",
+          "home": "NYJ",
+          "kickoff": "2026-09-20T13:00:00-04:00"
+        },
+        {
+          "away": "CLE",
+          "home": "TB",
+          "kickoff": "2026-09-20T13:00:00-04:00"
+        },
+        {
+          "away": "PHI",
+          "home": "TEN",
+          "kickoff": "2026-09-20T13:00:00-04:00"
+        },
+        {
+          "away": "JAC",
+          "home": "DEN",
+          "kickoff": "2026-09-20T16:05:00-04:00"
+        },
+        {
+          "away": "LV",
+          "home": "LAC",
+          "kickoff": "2026-09-20T16:05:00-04:00"
+        },
+        {
+          "away": "SEA",
+          "home": "ARI",
+          "kickoff": "2026-09-20T16:25:00-04:00"
+        },
+        {
+          "away": "WAS",
+          "home": "DAL",
+          "kickoff": "2026-09-20T16:25:00-04:00"
+        },
+        {
+          "away": "MIA",
+          "home": "SF",
+          "kickoff": "2026-09-20T16:25:00-04:00"
+        },
+        {
+          "away": "IND",
+          "home": "KC",
+          "kickoff": "2026-09-20T20:20:00-04:00"
+        },
+        {
+          "away": "NYG",
+          "home": "LAR",
+          "kickoff": "2026-09-21T20:15:00-04:00"
+        }
+      ]
+    },
+    {
+      "week": 3,
+      "complete": true,
+      "source_url": "https://www.nfl.com/schedules/2026/by-week/week-3",
+      "games": [
+        {
+          "away": "ATL",
+          "home": "GB",
+          "kickoff": "2026-09-24T20:15:00-04:00"
+        },
+        {
+          "away": "LAC",
+          "home": "BUF",
+          "kickoff": "2026-09-27T13:00:00-04:00"
+        },
+        {
+          "away": "CAR",
+          "home": "CLE",
+          "kickoff": "2026-09-27T13:00:00-04:00"
+        },
+        {
+          "away": "NYJ",
+          "home": "DET",
+          "kickoff": "2026-09-27T13:00:00-04:00"
+        },
+        {
+          "away": "HOU",
+          "home": "IND",
+          "kickoff": "2026-09-27T13:00:00-04:00"
+        },
+        {
+          "away": "NE",
+          "home": "JAC",
+          "kickoff": "2026-09-27T13:00:00-04:00"
+        },
+        {
+          "away": "KC",
+          "home": "MIA",
+          "kickoff": "2026-09-27T13:00:00-04:00"
+        },
+        {
+          "away": "TEN",
+          "home": "NYG",
+          "kickoff": "2026-09-27T13:00:00-04:00"
+        },
+        {
+          "away": "CIN",
+          "home": "PIT",
+          "kickoff": "2026-09-27T13:00:00-04:00"
+        },
+        {
+          "away": "SEA",
+          "home": "WAS",
+          "kickoff": "2026-09-27T13:00:00-04:00"
+        },
+        {
+          "away": "ARI",
+          "home": "SF",
+          "kickoff": "2026-09-27T16:05:00-04:00"
+        },
+        {
+          "away": "MIN",
+          "home": "TB",
+          "kickoff": "2026-09-27T16:05:00-04:00"
+        },
+        {
+          "away": "LV",
+          "home": "NO",
+          "kickoff": "2026-09-27T16:25:00-04:00"
+        },
+        {
+          "away": "BAL",
+          "home": "DAL",
+          "kickoff": "2026-09-27T16:25:00-04:00"
+        },
+        {
+          "away": "LAR",
+          "home": "DEN",
+          "kickoff": "2026-09-27T20:20:00-04:00"
+        },
+        {
+          "away": "PHI",
+          "home": "CHI",
+          "kickoff": "2026-09-28T20:15:00-04:00"
+        }
+      ]
+    }
+  ]
+}

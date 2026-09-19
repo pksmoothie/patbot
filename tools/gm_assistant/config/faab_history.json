@@ -1,0 +1,385 @@
+{
+  "schema_version": "0.3",
+  "starting_faab": 100,
+  "source": "User supplied completed-season totals, 2023–2025. Pat aliases not supplied.",
+  "owners": [
+    {
+      "owner": "Pat",
+      "seasons": [
+        {
+          "season": 2023,
+          "aliases": [],
+          "remaining": 5,
+          "spent": 95,
+          "moves": 40
+        },
+        {
+          "season": 2024,
+          "aliases": [],
+          "remaining": 0,
+          "spent": 100,
+          "moves": 44
+        },
+        {
+          "season": 2025,
+          "aliases": [],
+          "remaining": 8,
+          "spent": 92,
+          "moves": 26
+        }
+      ]
+    },
+    {
+      "owner": "Matt",
+      "seasons": [
+        {
+          "season": 2023,
+          "aliases": [
+            "TheMateoFootballTeam"
+          ],
+          "remaining": 0,
+          "spent": 100,
+          "moves": 17
+        },
+        {
+          "season": 2024,
+          "aliases": [
+            "TheMateoFootballTeam"
+          ],
+          "remaining": 64,
+          "spent": 36,
+          "moves": 10
+        },
+        {
+          "season": 2025,
+          "aliases": [
+            "TheMateoFootballTeam"
+          ],
+          "remaining": 60,
+          "spent": 40,
+          "moves": 7
+        }
+      ]
+    },
+    {
+      "owner": "Lou",
+      "seasons": [
+        {
+          "season": 2023,
+          "aliases": [
+            "Seven Car Pileup"
+          ],
+          "remaining": 60,
+          "spent": 40,
+          "moves": 22
+        },
+        {
+          "season": 2024,
+          "aliases": [
+            "Pancake Drawers"
+          ],
+          "remaining": 0,
+          "spent": 100,
+          "moves": 20
+        },
+        {
+          "season": 2025,
+          "aliases": [
+            "Back of the Sun"
+          ],
+          "remaining": 55,
+          "spent": 45,
+          "moves": 13
+        }
+      ]
+    },
+    {
+      "owner": "Dave",
+      "seasons": [
+        {
+          "season": 2023,
+          "aliases": [
+            "Bob's Sacamano"
+          ],
+          "remaining": 59,
+          "spent": 41,
+          "moves": 23
+        },
+        {
+          "season": 2024,
+          "aliases": [
+            "Bob's Sacamano"
+          ],
+          "remaining": 80,
+          "spent": 20,
+          "moves": 23
+        },
+        {
+          "season": 2025,
+          "aliases": [
+            "Take It To The (Doll)house"
+          ],
+          "remaining": 73,
+          "spent": 27,
+          "moves": 43
+        }
+      ]
+    },
+    {
+      "owner": "Sarlo",
+      "seasons": [
+        {
+          "season": 2023,
+          "aliases": [
+            "Nibjigba the McCatfrey"
+          ],
+          "remaining": 2,
+          "spent": 98,
+          "moves": 37
+        },
+        {
+          "season": 2024,
+          "aliases": [
+            "Money Printer Joe Brrr"
+          ],
+          "remaining": 17,
+          "spent": 83,
+          "moves": 24
+        },
+        {
+          "season": 2025,
+          "aliases": [
+            "Love the Drake"
+          ],
+          "remaining": 51,
+          "spent": 49,
+          "moves": 24
+        }
+      ]
+    },
+    {
+      "owner": "Faherty",
+      "seasons": [
+        {
+          "season": 2023,
+          "aliases": [
+            "BallWitDWall(dbangdbangdiggy)"
+          ],
+          "remaining": 28,
+          "spent": 72,
+          "moves": 28
+        },
+        {
+          "season": 2024,
+          "aliases": [
+            "Nacua Matata"
+          ],
+          "remaining": 60,
+          "spent": 40,
+          "moves": 16
+        },
+        {
+          "season": 2025,
+          "aliases": [
+            "Micro Penix"
+          ],
+          "remaining": 49,
+          "spent": 51,
+          "moves": 29
+        }
+      ]
+    },
+    {
+      "owner": "Potter",
+      "seasons": [
+        {
+          "season": 2023,
+          "aliases": [
+            "Pooter & The Blowfish"
+          ],
+          "remaining": 0,
+          "spent": 100,
+          "moves": 28
+        },
+        {
+          "season": 2024,
+          "aliases": [
+            "Pooter & The Blowfish"
+          ],
+          "remaining": 21,
+          "spent": 79,
+          "moves": 23
+        },
+        {
+          "season": 2025,
+          "aliases": [
+            "Pooter & The Blowfish"
+          ],
+          "remaining": 0,
+          "spent": 100,
+          "moves": 44
+        }
+      ]
+    },
+    {
+      "owner": "George",
+      "seasons": [
+        {
+          "season": 2023,
+          "aliases": [
+            "Reverse Jinx"
+          ],
+          "remaining": 0,
+          "spent": 100,
+          "moves": 26
+        },
+        {
+          "season": 2024,
+          "aliases": [
+            "Bandit"
+          ],
+          "remaining": 30,
+          "spent": 70,
+          "moves": 37
+        },
+        {
+          "season": 2025,
+          "aliases": [
+            "Remember The Face"
+          ],
+          "remaining": 8,
+          "spent": 92,
+          "moves": 26
+        }
+      ]
+    },
+    {
+      "owner": "James",
+      "seasons": [
+        {
+          "season": 2023,
+          "aliases": [
+            "The Dreem Team"
+          ],
+          "remaining": 98,
+          "spent": 2,
+          "moves": 17
+        },
+        {
+          "season": 2024,
+          "aliases": [
+            "The Dreem Team"
+          ],
+          "remaining": 34,
+          "spent": 66,
+          "moves": 6
+        },
+        {
+          "season": 2025,
+          "aliases": [
+            "The Dreem Team"
+          ],
+          "remaining": 65,
+          "spent": 35,
+          "moves": 15
+        }
+      ]
+    },
+    {
+      "owner": "Frank",
+      "seasons": [
+        {
+          "season": 2023,
+          "aliases": [
+            "FRANK-E"
+          ],
+          "remaining": 100,
+          "spent": 0,
+          "moves": 18
+        },
+        {
+          "season": 2024,
+          "aliases": [
+            "FRANK-E"
+          ],
+          "remaining": 88,
+          "spent": 12,
+          "moves": 7
+        },
+        {
+          "season": 2025,
+          "aliases": [
+            "FRANK-E"
+          ],
+          "remaining": 100,
+          "spent": 0,
+          "moves": 4
+        }
+      ]
+    },
+    {
+      "owner": "Vinnie",
+      "seasons": [
+        {
+          "season": 2023,
+          "aliases": [
+            "Pink Elephants"
+          ],
+          "remaining": 95,
+          "spent": 5,
+          "moves": 7
+        },
+        {
+          "season": 2024,
+          "aliases": [
+            "Pink Elephants"
+          ],
+          "remaining": 86,
+          "spent": 14,
+          "moves": 7
+        },
+        {
+          "season": 2025,
+          "aliases": [
+            "Pink Elephants"
+          ],
+          "remaining": 20,
+          "spent": 80,
+          "moves": 14
+        }
+      ]
+    },
+    {
+      "owner": "Paul",
+      "seasons": [
+        {
+          "season": 2023,
+          "aliases": [
+            "STROUD BOYS"
+          ],
+          "remaining": 17,
+          "spent": 83,
+          "moves": 18
+        },
+        {
+          "season": 2024,
+          "aliases": [
+            "Breece Lightening"
+          ],
+          "remaining": 63,
+          "spent": 37,
+          "moves": 22
+        },
+        {
+          "season": 2025,
+          "aliases": [
+            "The Coin"
+          ],
+          "remaining": 47,
+          "spent": 53,
+          "moves": 17
+        }
+      ]
+    }
+  ]
+}

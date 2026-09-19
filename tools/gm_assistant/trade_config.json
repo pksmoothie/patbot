@@ -1,0 +1,27 @@
+{
+  "minimum_lineup_gain": 1.0,
+  "strong_lineup_gain": 3.0,
+  "protected_lineup_gain": 1.5,
+  "protected_ros_gain": 1.5,
+  "protected_equity_gain": 1.0,
+  "minimum_ros_gain": 0.5,
+  "minimum_equity_gain": 0.25,
+  "maximum_weekly_sacrifice": 1.0,
+  "minimum_asset_ratio": 0.9,
+  "maximum_asset_ratio": 1.15,
+  "counterparty_minimum_ros_gain": 0.25,
+  "counterparty_minimum_weekly_gain": 0.5,
+  "analyzer_counterparty_loss_limit": 0.25,
+  "counterparty_weekly_loss_limit": 2.5,
+  "counterparty_ros_loss_limit": 0.25,
+  "bench_weight": 0.15,
+  "max_targets_per_owner": 8,
+  "max_offer_chips": 8,
+  "max_priority_targets": 5,
+  "scarcity": {
+    "QB": 0.7,
+    "RB": 1.1,
+    "WR": 1.0,
+    "TE": 0.85
+  }
+}
