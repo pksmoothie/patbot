@@ -13,7 +13,7 @@ from mcp.client.streamable_http import streamable_http_client
 import fantasypros_mcp_windows as fpw
 
 LEAGUE_KEY = "nfl~8922f34b-15ab-48d6-b51a-472098c3ae5a"
-TEAM_ID = 6
+TEAM_ID = "6"
 
 
 def render_result(result) -> str:
@@ -38,10 +38,11 @@ async def main_async() -> int:
                     "get_roster",
                     {"league_key": LEAGUE_KEY, "sport": "nfl", "team_id": TEAM_ID},
                 )
-                if getattr(result, "isError", False):
-                    print("Direct FantasyPros roster read returned a tool error.")
-                    return 1
                 text = render_result(result)
+                if getattr(result, "isError", False) or text.startswith("Error executing tool "):
+                    print("Direct FantasyPros roster read returned a tool error.")
+                    print(text[:3000])
+                    return 1
                 if not text:
                     print("Direct FantasyPros roster read succeeded but returned no printable roster payload.")
                     return 1
