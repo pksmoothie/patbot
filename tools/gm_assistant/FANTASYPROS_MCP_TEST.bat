@@ -8,5 +8,5 @@ if not exist "%GM_PYTHON%" (
   pause
   exit /b 1
 )
-"%GM_PYTHON%" fantasypros_mcp.py
+"%GM_PYTHON%" fantasypros_mcp_windows.py
 if errorlevel 1 pause
