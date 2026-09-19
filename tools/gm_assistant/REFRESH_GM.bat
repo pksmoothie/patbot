@@ -8,5 +8,5 @@ if not exist "%GM_PYTHON%" (
   pause
   exit /b 1
 )
-"%GM_PYTHON%" refresh.py run
+"%GM_PYTHON%" fantasypros_direct_refresh.py
 if errorlevel 1 pause
