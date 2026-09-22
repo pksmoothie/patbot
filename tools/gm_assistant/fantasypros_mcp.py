@@ -35,9 +35,36 @@ SERVICE = "patbot.gm_assistant.fantasypros.mcp.v1"
 TOKENS_ACCOUNT = "oauth_tokens"
 CLIENT_ACCOUNT = "oauth_client_info"
 
+# FantasyPros currently proxies its public MCP endpoint to an AWS Bedrock
+# AgentCore runtime. The MCP SDK correctly rejects unrelated protected-resource
+# URLs by default, so keep that protection and allow only the specific backend
+# shape FantasyPros is using rather than disabling validation globally.
+BEDROCK_RESOURCE_HOST = "bedrock-agentcore.us-east-1.amazonaws.com"
+BEDROCK_RESOURCE_PATH_PREFIX = (
+    "/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A100709682036%3Aruntime%2Ffp_mcp_server-"
+)
+
 
 class FantasyProsMCPError(Exception):
     """Safe fixed-message errors for the local CLI."""
+
+
+async def validate_fantasypros_resource(server_url: str, prm_resource: str | None) -> None:
+    """Accept only FantasyPros' public MCP resource or its known Bedrock proxy."""
+    if server_url != MCP_URL:
+        raise FantasyProsMCPError("Unexpected FantasyPros MCP server URL.")
+    if not prm_resource or prm_resource == MCP_URL:
+        return
+    parsed = urlsplit(prm_resource)
+    params = parse_qs(parsed.query)
+    if (
+        parsed.scheme == "https"
+        and parsed.hostname == BEDROCK_RESOURCE_HOST
+        and parsed.path.startswith(BEDROCK_RESOURCE_PATH_PREFIX)
+        and params.get("qualifier") == ["DEFAULT"]
+    ):
+        return
+    raise FantasyProsMCPError("FantasyPros returned an unexpected protected resource URL.")
 
 
 class WindowsTokenStorage:
@@ -194,6 +221,7 @@ def oauth_provider() -> OAuthClientProvider:
         storage=WindowsTokenStorage(),
         redirect_handler=open_browser,
         callback_handler=wait_for_callback,
+        validate_resource_url=validate_fantasypros_resource,
     )
 
 
